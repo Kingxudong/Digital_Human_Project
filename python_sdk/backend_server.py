@@ -31,6 +31,11 @@ from sauc_websocket_demo import MicrophoneRecorder, AsrWsClient
 app = FastAPI(title="HiAgent Integrated Backend", version="1.0.0")
 
 
+# WebSocket相关全局变量
+websocket_connections: Dict[str, websockets.WebSocketServerProtocol] = {}
+audio_sessions: Dict[str, dict] = {}
+stt_clients: Dict[str, STTClient] = {}
+
 # Global exception handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -245,11 +250,12 @@ async def startup_event():
     应用启动时初始化所有客户端
     
     执行顺序：
-    1. 初始化LLM客户端
-    2. 初始化TTS客户端  
-    3. 初始化数字人客户端
-    4. 初始化STT客户端
-    5. 启动清理任务
+    1. 启动WebSocket服务器
+    2. 初始化LLM客户端
+    3. 初始化TTS客户端  
+    4. 初始化数字人客户端
+    5. 初始化STT客户端
+    6. 启动清理任务
     
     错误处理：
     - 每个客户端初始化失败都会记录日志
@@ -257,9 +263,12 @@ async def startup_event():
     - 提供详细的初始化状态反馈
     """
 
-    global llm_client, tts_client, digital_human_client, stt_client
+    global llm_client, tts_client, digital_human_client, stt_client, websocket_server
 
-    logger.info("Initializing clients...")
+    logger.info("Initializing clients and WebSocket server...")
+
+    # Start WebSocket server
+    websocket_server = await start_websocket_server()
 
     # Initialize LLM client
     llm_client = LLMClient(
@@ -290,7 +299,7 @@ async def startup_event():
     # Start cleanup task for pending requests
     asyncio.create_task(cleanup_pending_requests())
 
-    logger.info("All clients initialized successfully")
+    logger.info("All clients and WebSocket server initialized successfully")
 
 
 async def cleanup_pending_requests():
@@ -1876,6 +1885,181 @@ async def record_and_process_voice(request: Request):
             "message": f"录制完成处理失败: {str(e)}",
             "session_id": session_id if "session_id" in locals() else "unknown",
         }
+
+
+# WebSocket处理函数
+async def websocket_handler(websocket, path):
+    """WebSocket连接处理器"""
+    # 检查路径是否匹配
+    if path != "/audio":
+        logger.warning(f"不支持的WebSocket路径: {path}")
+        await websocket.close(1008, "不支持的路径")
+        return
+        
+    session_id = str(uuid.uuid4())
+    websocket_connections[session_id] = websocket
+    audio_sessions[session_id] = {
+        "session_id": session_id,
+        "connected_time": asyncio.get_event_loop().time(),
+        "audio_frames_received": 0,
+        "total_bytes_received": 0,
+        "last_activity": asyncio.get_event_loop().time()
+    }
+    
+    # 创建STT客户端
+    stt_client = STTClient()
+    stt_clients[session_id] = stt_client
+    
+    logger.info(f"WebSocket连接建立 - 会话ID: {session_id}, 路径: {path}")
+    
+    try:
+        async for message in websocket:
+            try:
+                # 更新活动时间
+                audio_sessions[session_id]["last_activity"] = asyncio.get_event_loop().time()
+                
+                # 处理消息
+                if isinstance(message, str):
+                    # JSON消息
+                    data = json.loads(message)
+                    await handle_json_message(session_id, data)
+                else:
+                    # 二进制音频数据
+                    await handle_audio_data(session_id, message)
+                    
+            except json.JSONDecodeError:
+                logger.error(f"无效的JSON消息: {message}")
+            except Exception as e:
+                logger.error(f"处理消息失败: {e}")
+                
+    except websockets.exceptions.ConnectionClosed:
+        logger.info(f"WebSocket连接关闭 - 会话ID: {session_id}")
+    except Exception as e:
+        logger.error(f"WebSocket错误: {e}")
+    finally:
+        # 清理资源
+        cleanup_websocket_session(session_id)
+
+async def handle_json_message(session_id: str, data: dict):
+    """处理JSON消息"""
+    message_type = data.get("type", "unknown")
+    
+    if message_type == "connect":
+        # 客户端连接消息
+        client_info = data.get("data", {})
+        audio_sessions[session_id]["client_info"] = client_info
+        logger.info(f"客户端连接 - 会话ID: {session_id}, 信息: {client_info}")
+        
+        # 发送连接确认
+        await send_json_message(session_id, {
+            "type": "connect_ack",
+            "session_id": session_id,
+            "timestamp": asyncio.get_event_loop().time()
+        })
+        
+    elif message_type == "system_info":
+        # 系统信息
+        system_info = data.get("data", {})
+        audio_sessions[session_id]["system_info"] = system_info
+        logger.info(f"系统信息 - 会话ID: {session_id}, 信息: {system_info}")
+        
+    elif message_type == "silence_detected":
+        # 静音检测
+        silence_info = data.get("data", {})
+        logger.info(f"静音检测 - 会话ID: {session_id}, 持续时间: {silence_info.get('duration', 0)}秒")
+        
+    elif message_type == "heartbeat":
+        # 心跳消息
+        await send_json_message(session_id, {
+            "type": "heartbeat_ack",
+            "timestamp": asyncio.get_event_loop().time()
+        })
+        
+    else:
+        logger.debug(f"未知消息类型: {message_type}")
+
+async def handle_audio_data(session_id: str, audio_data: bytes):
+    """处理音频数据"""
+    try:
+        # 更新统计
+        audio_sessions[session_id]["audio_frames_received"] += 1
+        audio_sessions[session_id]["total_bytes_received"] += len(audio_data)
+        
+        # 使用STT客户端进行语音识别
+        stt_client = stt_clients.get(session_id)
+        if stt_client:
+            # 这里应该调用STT服务进行语音识别
+            # 由于STT客户端可能需要特定的音频格式，这里先模拟处理
+            logger.debug(f"收到音频数据 - 会话ID: {session_id}, 大小: {len(audio_data)} 字节")
+            
+            # 模拟STT结果（实际应该调用真实的STT服务）
+            # stt_result = await stt_client.recognize_audio(audio_data)
+            
+            # 发送模拟的STT结果
+            await send_json_message(session_id, {
+                "type": "stt_result",
+                "data": {
+                    "text": f"模拟识别结果 - 帧 {audio_sessions[session_id]['audio_frames_received']}",
+                    "is_final": False,
+                    "confidence": 0.85
+                }
+            })
+            
+    except Exception as e:
+        logger.error(f"处理音频数据失败: {e}")
+
+async def send_json_message(session_id: str, message: dict):
+    """发送JSON消息"""
+    try:
+        websocket = websocket_connections.get(session_id)
+        if websocket:
+            await websocket.send(json.dumps(message, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"发送消息失败: {e}")
+
+def cleanup_websocket_session(session_id: str):
+    """清理WebSocket会话"""
+    try:
+        # 移除连接
+        if session_id in websocket_connections:
+            del websocket_connections[session_id]
+            
+        # 移除会话信息
+        if session_id in audio_sessions:
+            del audio_sessions[session_id]
+            
+        # 关闭STT客户端
+        if session_id in stt_clients:
+            stt_client = stt_clients[session_id]
+            # 这里应该调用STT客户端的清理方法
+            del stt_clients[session_id]
+            
+        logger.info(f"WebSocket会话清理完成 - 会话ID: {session_id}")
+        
+    except Exception as e:
+        logger.error(f"清理WebSocket会话失败: {e}")
+
+# WebSocket服务器启动函数
+async def start_websocket_server():
+    """启动WebSocket服务器"""
+    try:
+        # 创建WebSocket服务器，使用更简单的方式
+        server = await websockets.serve(
+            websocket_handler,
+            "localhost",
+            9001,
+            ping_interval=20,
+            ping_timeout=10,
+            close_timeout=10
+        )
+        logger.info("WebSocket服务器启动成功 - ws://localhost:9001/audio")
+        return server
+    except Exception as e:
+        logger.error(f"启动WebSocket服务器失败: {e}")
+        import traceback
+        logger.error(f"详细错误: {traceback.format_exc()}")
+        return None
+
 
 
 if __name__ == "__main__":

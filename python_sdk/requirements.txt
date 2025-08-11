@@ -12,11 +12,16 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
 
+# Audio processing (新增的音频处理依赖)
+sounddevice>=0.4.6
+numpy>=1.21.0
+opuslib>=3.0.1
+soxr>=0.3.5
+
 # Audio processing (optional, for advanced audio handling)
 # librosa>=0.9.0
 # pydub>=0.25.0
 # scipy>=1.9.0
-# numpy>=1.21.0
 
 # ByteRTC SDK (if available)
 # bytertc-python-sdk>=1.0.0
