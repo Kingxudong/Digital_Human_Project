@@ -38,7 +38,7 @@ class AudioWebSocketClient:
     改进的WebSocket客户端 - 参考小智项目实现
     """
     
-    def __init__(self, server_url: str = "ws://localhost:9001/audio"):
+    def __init__(self, server_url: str = "ws://localhost:9002/audio"):
         self.server_url = server_url
         self.websocket = None
         self.state = ConnectionState.DISCONNECTED

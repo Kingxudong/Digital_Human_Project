@@ -3,9 +3,9 @@
  * SPDX-license-identifier: BSD-3-Clause
  */
 
-import React, { useState, useContext, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useContext, useEffect, useCallback, useRef, useMemo } from 'react';
 import { message, Input, Button, List, Typography } from 'antd';
-import { AudioOutlined, StopOutlined } from '@ant-design/icons';
+import { AudioOutlined, StopOutlined, SettingOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import {
   MediaType,
@@ -16,7 +16,7 @@ import {
 } from '@volcengine/rtc';
 import { ControlBar, AutoPlayModal } from '../../modules';
 import { Context } from '../../context';
-// STTRecorder component removed - using simplified voice input
+import AudioRecorder from '../../components/AudioRecorder';
 
 import RTCComponent from '../../sdk/rtc-component';
 import { RTCClient } from '../../app-interfaces';
@@ -289,12 +289,22 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   // 语音录音相关状态
   const [isRecording, setIsRecording] = useState<boolean>(false);
   
+  // 前端录音模式相关状态
+  const [recordingStatus, setRecordingStatus] = useState<string>('未连接');
+  const [sttResults, setSttResults] = useState<string[]>([]);
+  
   // STT相关状态
   const [sttEnabled, setSttEnabled] = useState<boolean>(false);
   const [digitalHumanJoined, setDigitalHumanJoined] = useState<boolean>(false);
   const [digitalHumanJoining, setDigitalHumanJoining] = useState<boolean>(false);
   const [digitalHumanJoinError, setDigitalHumanJoinError] = useState<string>('');
   const [currentLiveId, setCurrentLiveId] = useState<string>('');
+
+  // 使用useMemo确保前端录音的sessionId在组件生命周期内保持稳定
+  const frontendSessionId = useMemo(() => 
+    `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, 
+    []
+  );
 
   const [remoteStreams, setRemoteStreams] = useState<{
     [key: string]: {
@@ -669,6 +679,38 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
     }
   };
 
+  // 前端录音相关处理函数
+  const handleFrontendSTTResult = (text: string, isFinal: boolean, confidence: number) => {
+    console.log('🎯 父组件收到前端STT结果:', text, '最终结果:', isFinal, '置信度:', confidence);
+    
+    if (isFinal) {
+      console.log('🎯 处理最终STT结果，设置输入消息:', text);
+      setInputMessage(text);
+      setSttResults(prev => [...prev, text]);
+      // 自动发送识别到的文本
+      if (text.trim()) {
+        console.log('🎯 自动发送识别到的文本到数字人:', text);
+        sendMessageInternal(text);
+      } else {
+        console.log('🎯 STT结果为空，跳过发送');
+      }
+    } else {
+      // 中间结果，可以显示在界面上
+      console.log('🎯 处理中间STT结果，更新输入消息:', text);
+      setInputMessage(text);
+    }
+  };
+
+  const handleRecordingError = (error: string) => {
+    console.error('❌ 父组件收到录音错误:', error);
+    message.error('录音错误: ' + error);
+  };
+
+  const handleRecordingStatusChange = (status: string) => {
+    console.log('📊 父组件收到录音状态变化:', status);
+    setRecordingStatus(status);
+  };
+
   // 内部发送消息函数
   const sendMessageInternal = async (messageText?: string) => {
     const textToSend = messageText || inputMessage;
@@ -1006,36 +1048,92 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
             >
               Send
             </Button>
-            <Button 
-              type={isRecording ? "primary" : "default"}
-              icon={isRecording ? <StopOutlined /> : <AudioOutlined />}
-              onClick={isRecording ? stopRecording : startRecording}
-              size="large"
-              style={{
-                borderRadius: '25px',
-                background: isRecording ? '#ff4d4f' : 'rgba(255,255,255,0.2)',
-                border: isRecording ? 'none' : '2px solid #e2e8f0',
-                color: isRecording ? 'white' : '#666',
-                fontWeight: '600',
-                minWidth: '50px',
-                marginLeft: '8px'
-              }}
-            />
-            <Button 
-              type="default" 
-              onClick={handleHangUp}
-              size="large"
-              style={{
-                borderRadius: '25px',
-                border: '2px solid #ef4444',
-                color: '#ef4444',
-                fontWeight: '600',
-                minWidth: '80px',
-                marginLeft: '8px'
-              }}
-            >
-              Hang Up
-            </Button>
+            
+            {/* 录音控制区域 */}
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '12px',
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(255,255,255,0.9)',
+              borderRadius: '16px',
+              border: '1px solid #e2e8f0',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}>
+                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                 <span style={{ fontSize: '12px', color: '#666', fontWeight: '500' }}>前端录音</span>
+                 {(() => {
+                   console.log('🎨 渲染AudioRecorder组件', {
+                     frontendSessionId,
+                     recordingStatus,
+                     timestamp: new Date().toISOString()
+                   });
+                   return (
+                     <AudioRecorder
+                       onSTTResult={handleFrontendSTTResult}
+                       onError={handleRecordingError}
+                       onStatusChange={handleRecordingStatusChange}
+                       websocketUrl="ws://localhost:9002/audio"
+                       sessionId={frontendSessionId}
+                     />
+                   );
+                 })()}
+                 <span style={{ fontSize: '10px', color: '#999' }}>
+                   {recordingStatus}
+                 </span>
+               </div>
+              
+              <div style={{ 
+                width: '1px', 
+                height: '40px', 
+                background: '#e2e8f0',
+                margin: '0 8px'
+              }} />
+              
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                <span style={{ fontSize: '12px', color: '#666', fontWeight: '500' }}>后端录音</span>
+                <Button 
+                  type={isRecording ? "primary" : "default"}
+                  icon={isRecording ? <StopOutlined /> : <AudioOutlined />}
+                  onClick={isRecording ? stopRecording : startRecording}
+                  size="large"
+                  style={{
+                    borderRadius: '25px',
+                    background: isRecording ? '#ff4d4f' : 'rgba(255,255,255,0.2)',
+                    border: isRecording ? 'none' : '2px solid #e2e8f0',
+                    color: isRecording ? 'white' : '#666',
+                    fontWeight: '600',
+                    minWidth: '50px'
+                  }}
+                />
+                <span style={{ fontSize: '10px', color: '#999' }}>
+                  {isRecording ? '录音中...' : '就绪'}
+                </span>
+              </div>
+              
+              <div style={{ 
+                width: '1px', 
+                height: '40px', 
+                background: '#e2e8f0',
+                margin: '0 8px'
+              }} />
+              
+              <Button 
+                type="default" 
+                onClick={handleHangUp}
+                size="large"
+                style={{
+                  borderRadius: '25px',
+                  border: '2px solid #ef4444',
+                  color: '#ef4444',
+                  fontWeight: '600',
+                  minWidth: '80px'
+                }}
+              >
+                Hang Up
+              </Button>
+            </div>
           </ChatInput>
           
           {/* STT语音识别组件已移除 - 使用简化的语音输入 */}

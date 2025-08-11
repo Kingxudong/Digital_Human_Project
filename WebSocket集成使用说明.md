@@ -55,7 +55,7 @@ python websocket_server.py
 ```
 
 这将启动独立的WebSocket服务器：
-- WebSocket: `ws://localhost:9001/audio`
+- WebSocket: `ws://localhost:9002/audio`
 
 #### 方式二：集成到后端服务器
 
@@ -66,7 +66,7 @@ python backend_server.py
 
 这将启动完整的后端服务：
 - HTTP API: `http://localhost:9000`
-- WebSocket: `ws://localhost:9001/audio`
+- WebSocket: `ws://localhost:9002/audio`
 
 **注意**：如果遇到WebSocket启动问题，建议使用方式一（独立服务器）。
 
@@ -81,7 +81,7 @@ from realtime_audio_system import RealtimeAudioSystem
 async def main():
     # 创建实时音频系统
     system = RealtimeAudioSystem(
-        websocket_url="ws://localhost:9001/audio",
+        websocket_url="ws://localhost:9002/audio",
         session_id="my_session_001",
         auto_reconnect=True,
         enable_audio_processing=True,
@@ -124,7 +124,7 @@ if __name__ == "__main__":
 ```python
 # 创建自定义配置的系统
 system = RealtimeAudioSystem(
-    websocket_url="ws://localhost:9001/audio",
+    websocket_url="ws://localhost:9002/audio",
     session_id="custom_session",
     auto_reconnect=True,
     enable_audio_processing=True,  # 启用Opus编码
@@ -188,7 +188,7 @@ from audio_websocket_client import AudioWebSocketClient
 
 async def main():
     client = AudioWebSocketClient(
-        server_url="ws://localhost:9001/audio",
+        server_url="ws://localhost:9002/audio",
         session_id="test_session",
         auto_reconnect=True
     )
@@ -263,7 +263,7 @@ python test_realtime_audio_system.py
 
 也可以使用在线WebSocket测试工具连接到：
 ```
-ws://localhost:9001/audio
+ws://localhost:9002/audio
 ```
 
 ### 3. 监控系统状态
@@ -310,7 +310,7 @@ AudioProcessor(
 
 ```python
 AudioWebSocketClient(
-    server_url="ws://localhost:9001/audio",  # 服务器地址
+    server_url="ws://localhost:9002/audio",  # 服务器地址
     session_id=None,                         # 会话ID（None为自动生成）
     auto_reconnect=True,                     # 自动重连
     reconnect_interval=5.0,                  # 重连间隔

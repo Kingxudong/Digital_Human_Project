@@ -39,7 +39,7 @@ class RealtimeAudioSystem:
     """
     
     def __init__(self, 
-                 websocket_url: str = "ws://localhost:9001/audio",
+                 websocket_url: str = "ws://localhost:9002/audio",
                  session_id: Optional[str] = None,
                  auto_reconnect: bool = True,
                  enable_audio_processing: bool = True,
