@@ -616,6 +616,7 @@ class STTClient:
                                 self.current_session.final_results += 1
                             self.stats["total_results"] += 1
                             
+                            logger.debug(f"STTClient: Calling on_result callback. Is it None? {self.on_result is None}")
                             if self.on_result:
                                 self.on_result(response.text, response.final)
                             

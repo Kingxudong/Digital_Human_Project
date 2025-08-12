@@ -2248,9 +2248,9 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
                 config=stt_config
             )
             
-            # 设置回调函数来处理STT结果
-            async def on_stt_result(text: str, is_final: bool):
-                logger.info(f"STT结果 - 会话ID: {session_id}, 文本: {text}, 最终: {is_final}")
+            # 设置回调函数来处理STT结果 - 使用同步函数包装异步操作
+            def on_stt_result(text: str, is_final: bool):
+                logger.info(f"🎯 STT结果回调被调用 - 会话ID: {session_id}, 文本: '{text}', 最终: {is_final}")
                 stt_message = {
                     "type": "stt_result",
                     "data": {
@@ -2259,25 +2259,24 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
                         "confidence": 0.95 if is_final else 0.85
                     }
                 }
-                logger.info(f"准备发送STT消息到前端 - 会话ID: {session_id}, 消息: {stt_message}")
-                await send_json_message(session_id, stt_message)
-                logger.info(f"STT消息发送完成 - 会话ID: {session_id}")
+                logger.info(f"🎯 准备发送STT消息到前端 - 会话ID: {session_id}, 消息: {stt_message}")
+                # 使用asyncio.create_task来处理异步操作
+                asyncio.create_task(send_json_message(session_id, stt_message))
+                logger.info(f"🎯 STT消息发送任务已创建 - 会话ID: {session_id}")
             
-            async def on_stt_error(error: str):
-                logger.error(f"STT错误 - 会话ID: {session_id}: {error}")
-                await send_json_message(session_id, {
+            def on_stt_error(error: str):
+                logger.error(f"❌ STT错误回调被调用 - 会话ID: {session_id}: {error}")
+                error_message = {
                     "type": "stt_error",
                     "data": {
                         "error": error,
                         "message": "语音识别失败"
                     }
-                })
+                }
+                # 使用asyncio.create_task来处理异步操作
+                asyncio.create_task(send_json_message(session_id, error_message))
             
-            # 设置回调
-            stt_client.set_callbacks(
-                on_result=on_stt_result,
-                on_error=on_stt_error
-            )
+            # 回调函数已在start_recognition中设置，无需重复设置
             
             # 连接到STT服务
             try:
@@ -2286,8 +2285,11 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
                     logger.error(f"STT客户端连接失败 - 会话ID: {session_id}")
                     return
                 
-                # 开始识别会话
-                success = await stt_client.start_recognition()
+                # 开始识别会话，并传入回调函数
+                success = await stt_client.start_recognition(
+                    on_result=on_stt_result,
+                    on_error=on_stt_error
+                )
                 if not success:
                     logger.error(f"STT识别会话启动失败 - 会话ID: {session_id}")
                     return
@@ -2308,10 +2310,10 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
         
         try:
             # 发送音频数据到STT服务
-            logger.info(f"发送音频数据到STT - 会话ID: {session_id}, 大小: {len(audio_data)} 字节")
+            logger.info(f"发送WAV音频数据到STT - 会话ID: {session_id}, 原始大小: {len(audio_data)} 字节, WAV大小: {len(wav_data)} 字节")
             
-            # 使用STT客户端的send_audio方法发送音频数据
-            success = await stt_client.send_audio(audio_data, is_last=False)
+            # 使用STT客户端的send_audio方法发送WAV音频数据
+            success = await stt_client.send_audio(wav_data, is_last=False)
             if not success:
                 logger.error(f"发送音频数据失败 - 会话ID: {session_id}")
                 await send_json_message(session_id, {
@@ -2355,11 +2357,17 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
 async def send_json_message(session_id: str, message: dict):
     """发送JSON消息"""
     try:
+        logger.info(f"📤 准备发送消息 - 会话ID: {session_id}, 消息类型: {message.get('type', 'unknown')}")
         websocket = websocket_connections.get(session_id)
         if websocket:
-            await websocket.send(json.dumps(message, ensure_ascii=False))
+            message_json = json.dumps(message, ensure_ascii=False)
+            logger.info(f"📤 发送消息内容: {message_json}")
+            await websocket.send(message_json)
+            logger.info(f"📤 消息发送成功 - 会话ID: {session_id}")
+        else:
+            logger.error(f"❌ WebSocket连接不存在 - 会话ID: {session_id}")
     except Exception as e:
-        logger.error(f"发送消息失败: {e}")
+        logger.error(f"❌ 发送消息失败 - 会话ID: {session_id}: {e}")
 
 async def cleanup_websocket_session(session_id: str):
     """清理WebSocket会话"""
