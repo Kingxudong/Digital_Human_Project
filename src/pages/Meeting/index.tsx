@@ -1062,7 +1062,6 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
               boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
             }}>
                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                 <span style={{ fontSize: '12px', color: '#666', fontWeight: '500' }}>前端录音</span>
                  {(() => {
                    console.log('🎨 渲染AudioRecorder组件', {
                      frontendSessionId,
@@ -1079,11 +1078,10 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                      />
                    );
                  })()}
-                 <span style={{ fontSize: '10px', color: '#999' }}>
-                   {recordingStatus}
-                 </span>
                </div>
               
+              {/* 后端录音按钮已隐藏 */}
+              {/* 
               <div style={{ 
                 width: '1px', 
                 height: '40px', 
@@ -1118,6 +1116,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                 background: '#e2e8f0',
                 margin: '0 8px'
               }} />
+              */}
               
               <Button 
                 type="default" 
