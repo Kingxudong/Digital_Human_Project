@@ -1774,137 +1774,6 @@ async def single_button_voice_control(request: Request):
         }
 
 
-@app.post("/api/voice/frontend_recording_process")
-async def frontend_recording_process(request: Request):
-    """前端录音批量处理：接收前端录音数据，进行STT处理"""
-    try:
-        # 解析请求体
-        try:
-            body = await request.json()
-            logger.info(f"收到前端录音处理请求: {body}")
-        except:
-            body = {}
-
-        # 获取参数
-        session_id = body.get("session_id") or str(uuid.uuid4())
-        user_id = body.get("user_id", "voice_user")
-        audio_data_base64 = body.get("audio_data")
-        live_id = body.get("live_id")
-        speaker = body.get("speaker", "BV001_streaming")
-
-        if not audio_data_base64:
-            return {
-                "success": False,
-                "message": "缺少音频数据",
-                "session_id": session_id,
-                "status": "no_audio_data",
-            }
-
-        try:
-            # 解码Base64音频数据
-            import base64
-            audio_data = base64.b64decode(audio_data_base64)
-            logger.info(f"前端录音数据解码完成，大小: {len(audio_data)} 字节")
-
-            # 检查音频数据是否有效
-            if len(audio_data) < 1000:
-                logger.warning(f"前端录音数据太短: {len(audio_data)} 字节")
-                return {
-                    "success": False,
-                    "message": "录音时间太短，请说话时间更长一些",
-                    "session_id": session_id,
-                    "status": "too_short",
-                }
-
-            # 使用ASR进行语音识别
-            logger.info("开始使用ASR进行前端录音识别...")
-            try:
-                # 创建ASR客户端并执行识别
-                asr_client = AsrWsClient(
-                    url="wss://voice.ap-southeast-1.bytepluses.com/api/v3/sauc/bigmodel"
-                )
-                
-                async with asr_client:
-                    # 建立WebSocket连接
-                    await asr_client.create_connection()
-
-                    # 发送认证请求
-                    await asr_client.send_full_client_request()
-
-                    # 处理音频数据
-                    recognition_text = ""
-                    async for response in asr_client.start_audio_stream(
-                        segment_size=asr_client.get_segment_size(audio_data),
-                        content=audio_data,
-                    ):
-                        if response.is_final_result():
-                            recognition_text = response.get_text()
-                            break
-
-                    if recognition_text:
-                        logger.info(f"前端录音ASR识别成功: {recognition_text}")
-                        recognition_result = {
-                            "success": True,
-                            "final_text": recognition_text,
-                            "intermediate_text": recognition_text,
-                        }
-                    else:
-                        logger.warning("前端录音ASR未识别到有效文本")
-                        recognition_result = {
-                            "success": False,
-                            "message": "未能识别到有效语音",
-                            "final_text": "",
-                        }
-
-            except Exception as asr_error:
-                logger.error(f"前端录音ASR识别失败: {asr_error}")
-                recognition_result = {
-                    "success": False,
-                    "message": f"ASR识别失败: {str(asr_error)}",
-                    "final_text": "",
-                }
-
-            if not recognition_result["success"]:
-                return recognition_result
-
-            recognized_text = recognition_result["final_text"]
-
-            if not recognized_text:
-                return {
-                    "success": False,
-                    "message": "未能识别到有效语音",
-                    "session_id": session_id,
-                    "status": "no_speech",
-                }
-
-            logger.info(f"前端录音识别完成: {recognized_text}")
-
-            # 返回识别结果
-            return {
-                "success": True,
-                "message": "前端录音识别完成",
-                "session_id": session_id,
-                "recognized_text": recognized_text,
-                "status": "completed",
-            }
-
-        except Exception as e:
-            logger.error(f"前端录音处理失败: {e}")
-            return {
-                "success": False,
-                "message": f"前端录音处理失败: {str(e)}",
-                "session_id": session_id,
-                "status": "error",
-            }
-
-    except Exception as e:
-        logger.error(f"前端录音处理失败: {e}")
-        return {
-            "success": False,
-            "message": f"前端录音处理失败: {str(e)}",
-            "session_id": session_id if "session_id" in locals() else "unknown",
-        }
-
 
 @app.post("/api/voice/record_and_process")
 async def record_and_process_voice(request: Request):
@@ -2276,7 +2145,6 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
                 # 使用asyncio.create_task来处理异步操作
                 asyncio.create_task(send_json_message(session_id, error_message))
             
-            # 回调函数已在start_recognition中设置，无需重复设置
             
             # 连接到STT服务
             try:
@@ -2403,7 +2271,7 @@ async def cleanup_websocket_session(session_id: str):
 async def start_websocket_server():
     """启动WebSocket服务器"""
     try:
-        # 创建WebSocket服务器，使用更简单的方式
+        # 创建WebSocket服务器
         server = await websockets.serve(
             websocket_handler,
             "localhost",
