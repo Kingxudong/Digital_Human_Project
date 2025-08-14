@@ -2037,6 +2037,23 @@ async def handle_json_message(session_id: str, data: dict):
             except Exception as e:
                 logger.error(f"发送最终音频包时出错 - 会话ID: {session_id}: {e}")
         
+        # 重置STT客户端会话状态
+        if session_id in stt_clients:
+            stt_client = stt_clients[session_id]
+            try:
+                logger.info(f"开始重置STT会话状态 - 会话ID: {session_id}")
+                success = await stt_client.reset_session()
+                if success:
+                    logger.info(f"STT会话重置成功 - 会话ID: {session_id}")
+                else:
+                    logger.error(f"STT会话重置失败 - 会话ID: {session_id}")
+                    # 如果重置失败，删除客户端以便下次重新创建
+                    del stt_clients[session_id]
+            except Exception as e:
+                logger.error(f"重置STT会话时出错 - 会话ID: {session_id}: {e}")
+                # 如果重置出错，删除客户端以便下次重新创建
+                del stt_clients[session_id]
+        
         # 发送录音结束确认
         await send_json_message(session_id, {
             "type": "recording_end_ack",
@@ -2081,18 +2098,19 @@ async def handle_json_message(session_id: str, data: dict):
 async def handle_audio_data(session_id: str, audio_data: bytes):
     """处理音频数据 - 前端录音 + 后端STT"""
     try:
-        # 更新统计
-        audio_sessions[session_id]["audio_frames_received"] += 1
-        audio_sessions[session_id]["total_bytes_received"] += len(audio_data)
-        
         # 检查录音状态，只有在录音状态下才处理音频
         recording_status = audio_sessions[session_id].get("recording_status", "stopped")
         if recording_status != "recording":
             logger.debug(f"录音未开始，跳过音频处理 - 会话ID: {session_id}")
             return
         
+        # 更新统计
+        audio_sessions[session_id]["audio_frames_received"] += 1
+        audio_sessions[session_id]["total_bytes_received"] += len(audio_data)
+        
         # 获取或创建STT客户端
         if session_id not in stt_clients:
+            logger.info(f"🔍 创建新的STT客户端 - 会话ID: {session_id}")
             # 创建新的STT客户端
             from stt_client import STTClient, STTConfig as STTClientConfig
             
@@ -2150,7 +2168,7 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
             try:
                 success = await stt_client.connect(STTConfig.STREAM_URL)
                 if not success:
-                    logger.error(f"STT客户端连接失败 - 会话ID: {session_id}")
+                    logger.error(f"🔍 STT客户端连接失败 - 会话ID: {session_id}")
                     return
                 
                 # 开始识别会话，并传入回调函数
@@ -2159,31 +2177,46 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
                     on_error=on_stt_error
                 )
                 if not success:
-                    logger.error(f"STT识别会话启动失败 - 会话ID: {session_id}")
+                    logger.error(f"🔍 STT识别会话启动失败 - 会话ID: {session_id}")
                     return
                 
                 stt_clients[session_id] = stt_client
-                logger.info(f"STT客户端初始化成功 - 会话ID: {session_id}")
+                logger.info(f"🔍 STT客户端初始化成功 - 会话ID: {session_id}")
             except Exception as e:
-                logger.error(f"STT客户端初始化失败 - 会话ID: {session_id}: {e}")
+                logger.error(f"🔍 STT客户端初始化失败 - 会话ID: {session_id}: {e}")
                 return
         
         stt_client = stt_clients[session_id]
+        logger.info(f"🔍 复用STT客户端 - 会话ID: {session_id}")
+        
+        # 检查STT客户端健康状态
+        if not stt_client.is_healthy():
+            logger.error(f"🔍 STT客户端状态不健康，尝试重新初始化 - 会话ID: {session_id}")
+            # 删除不健康的客户端，下次会重新创建
+            del stt_clients[session_id]
+            await send_json_message(session_id, {
+                "type": "stt_error",
+                "data": {
+                    "error": "STT客户端状态异常，请重试",
+                    "message": "语音识别失败"
+                }
+            })
+            return
         
         # 处理音频数据
-        logger.debug(f"收到音频数据 - 会话ID: {session_id}, 大小: {len(audio_data)} 字节")
         
         # 将PCM数据转换为WAV格式
         wav_data = convert_pcm_to_wav(audio_data, sample_rate=16000, channels=1, bits_per_sample=16)
         
         try:
             # 发送音频数据到STT服务
-            logger.info(f"发送WAV音频数据到STT - 会话ID: {session_id}, 原始大小: {len(audio_data)} 字节, WAV大小: {len(wav_data)} 字节")
-            
-            # 使用STT客户端的send_audio方法发送WAV音频数据
             success = await stt_client.send_audio(wav_data, is_last=False)
+            
             if not success:
-                logger.error(f"发送音频数据失败 - 会话ID: {session_id}")
+                logger.error(f"🔍 发送音频数据失败 - 会话ID: {session_id}")
+                # 如果发送失败，删除客户端以便下次重新创建
+                if session_id in stt_clients:
+                    del stt_clients[session_id]
                 await send_json_message(session_id, {
                     "type": "stt_error",
                     "data": {
@@ -2203,7 +2236,7 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
             })
                     
         except Exception as asr_error:
-            logger.error(f"ASR处理失败 - 会话ID: {session_id}: {asr_error}")
+            logger.error(f"🔍 ASR处理失败 - 会话ID: {session_id}: {asr_error}")
             await send_json_message(session_id, {
                 "type": "stt_error",
                 "data": {

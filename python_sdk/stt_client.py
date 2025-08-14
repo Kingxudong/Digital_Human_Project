@@ -506,14 +506,19 @@ class STTClient:
                 status=STTStatus.RECOGNIZING
             )
             
-            # 重置序列号为2，因为连接时已经发送了一个请求
-            self.seq = 2
+            # 保持序列号连续性，不重置序列号
+            # self.seq = 2  # 注释掉这行，保持序列号连续性
             
             logger.info(f"STT recognition started for session: {session_id} with seq: {self.seq}")
             
-            self.recognition_task = asyncio.create_task(
-                self._listen_recognition_results()
-            )
+            # 只有在没有运行中的识别任务时才创建新任务
+            if not self.recognition_task or self.recognition_task.done():
+                self.recognition_task = asyncio.create_task(
+                    self._listen_recognition_results()
+                )
+                logger.debug("已启动识别任务")
+            else:
+                logger.debug("识别任务已在运行，无需重新启动")
             
             return True
             
@@ -543,11 +548,65 @@ class STTClient:
         except Exception as e:
             logger.error(f"Failed to stop STT recognition: {e}")
             return False
+
+    async def reset_session(self) -> bool:
+        """重置会话状态，保持连接"""
+        try:
+            logger.info("开始重置STT会话状态")
+            
+            # 保存当前会话到历史
+            if self.current_session:
+                self.current_session.status = STTStatus.CONNECTED
+                self.session_history.append(self.current_session)
+                logger.debug(f"已保存会话到历史: {self.current_session.session_id}")
+            
+            # 重置关键状态 - 保持序列号连续性，不从1开始重置
+            # self.seq = 1  # 注释掉这行，保持序列号连续性
+            self.audio_buffer.clear()  # 清空音频缓冲区
+            self.buffer_size = 0
+            logger.debug("已清空音频缓冲区，保持序列号连续性")
+            
+            # 创建新会话
+            session_id = f"stt_session_{int(time.time() * 1000)}"
+            self.current_session = STTSession(
+                session_id=session_id,
+                start_time=time.time(),
+                config=self.config,
+                status=STTStatus.RECOGNIZING
+            )
+            logger.debug(f"已创建新会话: {session_id}")
+            
+            # 不再重新启动识别任务，因为监听循环会持续运行
+            # 只有在第一次启动时才创建识别任务
+            if not self.recognition_task or self.recognition_task.done():
+                self.recognition_task = asyncio.create_task(
+                    self._listen_recognition_results()
+                )
+                logger.debug("已启动识别任务")
+            else:
+                logger.debug("识别任务已在运行，无需重新启动")
+            
+            logger.info(f"STT会话重置成功: {session_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"重置STT会话失败: {e}")
+            if self.on_error:
+                self.on_error(f"Session reset failed: {str(e)}")
+            return False
     
     async def send_audio(self, audio_data: bytes, is_last: bool = False) -> bool:
         """发送音频数据进行识别"""
-        if not self.is_connected or not self.current_session:
-            logger.error("STT client not connected or no active session")
+        if not self.is_connected:
+            logger.error(f"🔍 STT客户端未连接: connected={self.is_connected}")
+            return False
+            
+        if not self.current_session:
+            logger.error(f"🔍 STT会话不存在: session={self.current_session is not None}")
+            return False
+            
+        if not self.websocket or self.websocket.state != websockets.protocol.State.OPEN:
+            logger.error(f"🔍 WebSocket连接状态异常: websocket={self.websocket is not None}, state={self.websocket.state if self.websocket else 'None'}")
             return False
         
         async with self._seq_lock:  # 使用序列号锁确保线程安全
@@ -573,18 +632,19 @@ class STTClient:
                 
                 # 构建音频请求 - 使用当前序列号，发送WAV格式数据
                 current_seq = self.seq
+                logger.debug(f"🔍 发送音频数据 - 序列号: {current_seq}, 会话: {self.current_session.session_id}, 数据长度: {len(wav_audio_data)}")
                 request = RequestBuilder.new_audio_only_request(current_seq, wav_audio_data, is_last)
                 await self.websocket.send(request)
                 
                 # 只有在成功发送后才增加序列号
                 self.seq += 1
                 self.stats["last_activity"] = time.time()
+                logger.debug(f"🔍 音频数据发送成功 - 新序列号: {self.seq}")
                 
-                logger.debug(f"Sent audio with seq: {current_seq}, is_last: {is_last}")
                 return True
                 
             except Exception as e:
-                logger.error(f"Failed to send audio to STT: {e}")
+                logger.error(f"🔍 STT音频发送失败: {e}")
                 if self.on_error:
                     self.on_error(f"Audio send failed: {str(e)}")
                 return False
@@ -634,7 +694,8 @@ class STTClient:
                         
                         if response.is_last_package:
                             logger.info(f"STT session ended: {self.current_session.session_id}")
-                            break
+                            # 不要break退出循环，继续监听新的会话
+                            # break
                         
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning("STT connection closed during recognition")
@@ -664,6 +725,13 @@ class STTClient:
             logger.debug("Heartbeat loop cancelled")
         except Exception as e:
             logger.error(f"Heartbeat loop error: {e}")
+    
+    def is_healthy(self) -> bool:
+        """检查STT客户端健康状态"""
+        return (self.is_connected and 
+                self.websocket is not None and 
+                self.websocket.state == websockets.protocol.State.OPEN and
+                self.current_session is not None)
     
     async def _reconnect_loop(self) -> None:
         """重连循环"""
