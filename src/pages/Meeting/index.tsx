@@ -1028,107 +1028,73 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
           </ChatMessages>
           
           <ChatInput>
-            <Input
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onPressEnter={sendMessage}
-              placeholder="Type your message..."
-
-              size="large"
-              style={{
-                borderRadius: '25px',
-                border: '2px solid #e2e8f0',
-                boxShadow: 'none',
-                fontSize: '16px'
-              }}
-            />
-            <Button 
-              type="primary" 
-              onClick={sendMessage}
-
-              disabled={!inputMessage.trim()}
-              size="large"
-              style={{
-                borderRadius: '25px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
-                boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
-                fontWeight: '600',
-                minWidth: '80px'
-              }}
-            >
-              Send
-            </Button>
-            
-            {/* 录音控制区域 */}
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '12px',
-              marginTop: '12px',
-              padding: '12px',
-              background: 'rgba(255,255,255,0.9)',
-              borderRadius: '16px',
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            <div style={{
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              width: '100%'
             }}>
-                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                 {(() => {
-                   console.log('🎨 渲染AudioRecorder组件', {
-                     frontendSessionId,
-                     recordingStatus,
-                     timestamp: new Date().toISOString()
-                   });
-                   return (
-                     <AudioRecorder
-                       onSTTResult={handleFrontendSTTResult}
-                       onError={handleRecordingError}
-                       onStatusChange={handleRecordingStatusChange}
-                       websocketUrl="ws://localhost:9002/audio"
-                       sessionId={frontendSessionId}
-                     />
-                   );
-                 })()}
-               </div>
+              <Input
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onPressEnter={sendMessage}
+                placeholder="Type your message..."
+                size="large"
+                style={{
+                  borderRadius: '25px',
+                  border: '2px solid #e2e8f0',
+                  boxShadow: 'none',
+                  fontSize: '16px',
+                  paddingRight: '140px', // 为录音按钮和发送按钮留出空间
+                  width: '100%'
+                }}
+              />
               
-              {/* 后端录音按钮已隐藏 */}
-              {/* 
-              <div style={{ 
-                width: '1px', 
-                height: '40px', 
-                background: '#e2e8f0',
-                margin: '0 8px'
-              }} />
-              
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                <span style={{ fontSize: '12px', color: '#666', fontWeight: '500' }}>后端录音</span>
-                <Button 
-                  type={isRecording ? "primary" : "default"}
-                  icon={isRecording ? <StopOutlined /> : <AudioOutlined />}
-                  onClick={isRecording ? stopRecording : startRecording}
-                  size="large"
-                  style={{
-                    borderRadius: '25px',
-                    background: isRecording ? '#ff4d4f' : 'rgba(255,255,255,0.2)',
-                    border: isRecording ? 'none' : '2px solid #e2e8f0',
-                    color: isRecording ? 'white' : '#666',
-                    fontWeight: '600',
-                    minWidth: '50px'
-                  }}
+              {/* 录音按钮 - 放在输入框内部右侧 */}
+              <div style={{
+                position: 'absolute',
+                right: '100px', // 为发送按钮留出空间
+                top: '50%',
+                transform: 'translateY(-50%)',
+                zIndex: 10,
+                display: 'flex',
+                alignItems: 'center'
+              }}>
+                <AudioRecorder
+                  onSTTResult={handleFrontendSTTResult}
+                  onError={handleRecordingError}
+                  onStatusChange={handleRecordingStatusChange}
+                  websocketUrl="ws://localhost:9002/audio"
+                  sessionId={frontendSessionId}
                 />
-                <span style={{ fontSize: '10px', color: '#999' }}>
-                  {isRecording ? '录音中...' : '就绪'}
-                </span>
               </div>
               
-              <div style={{ 
-                width: '1px', 
-                height: '40px', 
-                background: '#e2e8f0',
-                margin: '0 8px'
-              }} />
-              */}
-              
+              {/* 发送按钮 */}
+              <Button 
+                type="primary" 
+                onClick={sendMessage}
+                disabled={!inputMessage.trim()}
+                size="large"
+                style={{
+                  borderRadius: '25px',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
+                  fontWeight: '600',
+                  minWidth: '80px',
+                  marginLeft: '8px'
+                }}
+              >
+                Send
+              </Button>
+            </div>
+            
+            {/* Hang Up 按钮 */}
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'center',
+              marginTop: '12px'
+            }}>
               <Button 
                 type="default" 
                 onClick={handleHangUp}

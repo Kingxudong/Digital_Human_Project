@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Button, message } from 'antd';
-import { AudioOutlined, StopOutlined } from '@ant-design/icons';
+import { AudioOutlined, StopOutlined, SoundOutlined } from '@ant-design/icons';
 
 interface AudioRecorderProps {
   onSTTResult: (text: string, isFinal: boolean, confidence: number) => void;
@@ -332,9 +332,9 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   return (
     <Button
       type={isRecording ? "primary" : "default"}
-      icon={isRecording ? <StopOutlined /> : <AudioOutlined />}
+      icon={isRecording ? <StopOutlined /> : <SoundOutlined />}
       onClick={(e) => {
-        console.log('🖱️ 录音按钮被点击', {
+        console.log('🖱️ 语音按钮被点击', {
           isRecording,
           event: e,
           timestamp: new Date().toISOString()
@@ -345,14 +345,21 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           startRecording();
         }
       }}
-      size="large"
+      size="middle"
       style={{
-        borderRadius: '25px',
-        background: isRecording ? '#ff4d4f' : 'rgba(255,255,255,0.2)',
-        border: isRecording ? 'none' : '2px solid #e2e8f0',
-        color: isRecording ? 'white' : '#666',
+        borderRadius: '50%',
+        background: isRecording ? '#ff4d4f' : 'rgba(255,255,255,0.8)',
+        border: isRecording ? 'none' : '1px solid #d1d5db',
+        color: isRecording ? 'white' : '#6b7280',
         fontWeight: '600',
-        minWidth: '50px'
+        width: '28px',
+        height: '28px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: isRecording ? '0 2px 8px rgba(255, 77, 79, 0.3)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
+        transition: 'all 0.2s ease',
+        fontSize: '12px'
       }}
     />
   );
