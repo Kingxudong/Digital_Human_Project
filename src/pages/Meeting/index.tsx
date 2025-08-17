@@ -1040,26 +1040,26 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                 onPressEnter={sendMessage}
                 placeholder="Type your message..."
                 size="large"
-                style={{
-                  borderRadius: '25px',
-                  border: '2px solid #e2e8f0',
-                  boxShadow: 'none',
-                  fontSize: '16px',
-                  paddingRight: '140px', // 为录音按钮和发送按钮留出空间
-                  width: '100%'
-                }}
+                                 style={{
+                   borderRadius: '25px',
+                   border: '2px solid #e2e8f0',
+                   boxShadow: 'none',
+                   fontSize: '16px',
+                   paddingRight: '120px', // 为录音按钮和发送按钮留出空间
+                   width: '100%'
+                 }}
               />
               
-              {/* 录音按钮 - 放在输入框内部右侧 */}
-              <div style={{
-                position: 'absolute',
-                right: '100px', // 为发送按钮留出空间
-                top: '50%',
-                transform: 'translateY(-50%)',
-                zIndex: 10,
-                display: 'flex',
-                alignItems: 'center'
-              }}>
+                             {/* 录音按钮 - 放在输入框内部右侧 */}
+               <div style={{
+                 position: 'absolute',
+                 right: '80px', // 为发送按钮留出空间
+                 top: '50%',
+                 transform: 'translateY(-50%)',
+                 zIndex: 10,
+                 display: 'flex',
+                 alignItems: 'center'
+               }}>
                 <AudioRecorder
                   onSTTResult={handleFrontendSTTResult}
                   onError={handleRecordingError}
@@ -1069,24 +1069,26 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                 />
               </div>
               
-              {/* 发送按钮 */}
-              <Button 
-                type="primary" 
-                onClick={sendMessage}
-                disabled={!inputMessage.trim()}
-                size="large"
-                style={{
-                  borderRadius: '25px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  border: 'none',
-                  boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
-                  fontWeight: '600',
-                  minWidth: '80px',
-                  marginLeft: '8px'
-                }}
-              >
-                Send
-              </Button>
+                             {/* 发送按钮 */}
+               <Button 
+                 type="primary" 
+                 onClick={sendMessage}
+                 disabled={!inputMessage.trim()}
+                 size="middle"
+                 style={{
+                   borderRadius: '20px',
+                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                   border: 'none',
+                   boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
+                   fontWeight: '600',
+                   minWidth: '60px',
+                   height: '32px',
+                   marginLeft: '8px',
+                   fontSize: '12px'
+                 }}
+               >
+                 Send
+               </Button>
             </div>
             
             {/* Hang Up 按钮 */}
@@ -1095,20 +1097,22 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
               justifyContent: 'center',
               marginTop: '12px'
             }}>
-              <Button 
-                type="default" 
-                onClick={handleHangUp}
-                size="large"
-                style={{
-                  borderRadius: '25px',
-                  border: '2px solid #ef4444',
-                  color: '#ef4444',
-                  fontWeight: '600',
-                  minWidth: '80px'
-                }}
-              >
-                Hang Up
-              </Button>
+                             <Button 
+                 type="default" 
+                 onClick={handleHangUp}
+                 size="middle"
+                 style={{
+                   borderRadius: '20px',
+                   border: '2px solid #ef4444',
+                   color: '#ef4444',
+                   fontWeight: '600',
+                   minWidth: '60px',
+                   height: '32px',
+                   fontSize: '12px'
+                 }}
+               >
+                 Hang Up
+               </Button>
             </div>
           </ChatInput>
           

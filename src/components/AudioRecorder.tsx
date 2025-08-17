@@ -19,6 +19,8 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isInRecordMode, setIsInRecordMode] = useState(false); // 是否进入录音模式
+  const [isLongPressing, setIsLongPressing] = useState(false); // 是否正在长按
   
   const websocketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -26,6 +28,8 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const isRecordingRef = useRef<boolean>(false); // 用于音频处理回调中访问最新的录音状态
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null); // 长按定时器
+  const isMobileRef = useRef<boolean>(false); // 是否为移动端
 
   // 连接WebSocket
   const connectWebSocket = useCallback(async () => {
@@ -278,6 +282,12 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       isRecordingRef.current = false; // 同时更新ref
       onStatusChange('录音已停止');
       
+      // 移动端录音完成后退出录音模式
+      if (isMobileRef.current) {
+        setIsInRecordMode(false);
+        setIsLongPressing(false);
+      }
+      
       // 发送录音结束信号
       if (websocketRef.current?.readyState === WebSocket.OPEN) {
         const endMessage = {
@@ -296,6 +306,88 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       onError('停止录音失败: ' + errorMessage);
     }
   }, [sessionId, onStatusChange, onError, isRecording]);
+
+  // 移动端长按开始录音
+  const handleTouchStart = useCallback(async (e: React.TouchEvent) => {
+    if (!isMobileRef.current || !isInRecordMode) return;
+    
+    e.preventDefault();
+    console.log('📱 移动端触摸开始');
+    
+    // 设置长按定时器
+    longPressTimerRef.current = setTimeout(async () => {
+      console.log('📱 长按触发，开始录音');
+      setIsLongPressing(true);
+      await startRecording();
+    }, 500); // 500ms长按触发
+  }, [isInRecordMode, startRecording]);
+
+  // 移动端触摸结束
+  const handleTouchEnd = useCallback(async (e: React.TouchEvent) => {
+    if (!isMobileRef.current || !isInRecordMode) return;
+    
+    e.preventDefault();
+    console.log('📱 移动端触摸结束');
+    
+    // 清除长按定时器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    
+    // 如果正在录音，停止录音
+    if (isLongPressing) {
+      console.log('📱 停止录音');
+      setIsLongPressing(false);
+      await stopRecording();
+    }
+  }, [isInRecordMode, isLongPressing, stopRecording]);
+
+  // 移动端触摸取消
+  const handleTouchCancel = useCallback((e: React.TouchEvent) => {
+    if (!isMobileRef.current || !isInRecordMode) return;
+    
+    e.preventDefault();
+    console.log('📱 移动端触摸取消');
+    
+    // 清除长按定时器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    
+    // 如果正在录音，停止录音
+    if (isLongPressing) {
+      setIsLongPressing(false);
+      stopRecording();
+    }
+  }, [isInRecordMode, isLongPressing, stopRecording]);
+
+  // 桌面端点击处理
+  const handleClick = useCallback(async (e: React.MouseEvent) => {
+    if (isMobileRef.current) return; // 移动端不处理点击
+    
+    console.log('🖱️ 桌面端点击');
+    if (isRecording) {
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
+  }, [isRecording, startRecording, stopRecording]);
+
+  // 移动端点击进入录音模式
+  const handleMobileClick = useCallback((e: React.MouseEvent) => {
+    if (!isMobileRef.current) return;
+    
+    e.preventDefault();
+    console.log('📱 移动端点击，进入录音模式');
+    setIsInRecordMode(true);
+  }, []);
+
+  // 检测是否为移动端
+  useEffect(() => {
+    isMobileRef.current = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  }, []);
 
   // 组件加载时自动连接WebSocket
   useEffect(() => {
@@ -326,42 +418,100 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       if (websocketRef.current) {
         websocketRef.current.close();
       }
+      // 清理长按定时器
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
     };
   }, []); // 移除connectWebSocket依赖，避免重复连接
 
+  // 根据状态确定按钮样式和内容
+  const getButtonContent = () => {
+    if (isMobileRef.current) {
+      if (isInRecordMode) {
+        if (isLongPressing || isRecording) {
+          // 正在录音状态
+          return {
+            text: '松开结束',
+            icon: <StopOutlined />,
+            background: '#ff4d4f',
+            color: 'white',
+            border: 'none'
+          };
+        } else {
+          // 录音模式，等待长按
+          return {
+            text: '按住说话',
+            icon: <SoundOutlined />,
+            background: '#1890ff',
+            color: 'white',
+            border: 'none'
+          };
+        }
+      } else {
+        // 初始状态
+        return {
+          text: '',
+          icon: <SoundOutlined />,
+          background: 'rgba(255,255,255,0.8)',
+          color: '#6b7280',
+          border: '1px solid #d1d5db'
+        };
+      }
+    } else {
+      // 桌面端
+      if (isRecording) {
+        return {
+          text: '',
+          icon: <StopOutlined />,
+          background: '#ff4d4f',
+          color: 'white',
+          border: 'none'
+        };
+      } else {
+        return {
+          text: '',
+          icon: <SoundOutlined />,
+          background: 'rgba(255,255,255,0.8)',
+          color: '#6b7280',
+          border: '1px solid #d1d5db'
+        };
+      }
+    }
+  };
+
+  const buttonContent = getButtonContent();
+
   return (
     <Button
-      type={isRecording ? "primary" : "default"}
-      icon={isRecording ? <StopOutlined /> : <SoundOutlined />}
-      onClick={(e) => {
-        console.log('🖱️ 语音按钮被点击', {
-          isRecording,
-          event: e,
-          timestamp: new Date().toISOString()
-        });
-        if (isRecording) {
-          stopRecording();
-        } else {
-          startRecording();
-        }
-      }}
+      type={isRecording || isLongPressing ? "primary" : "default"}
+      icon={buttonContent.icon}
+      onClick={isMobileRef.current ? handleMobileClick : handleClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
       size="middle"
       style={{
-        borderRadius: '50%',
-        background: isRecording ? '#ff4d4f' : 'rgba(255,255,255,0.8)',
-        border: isRecording ? 'none' : '1px solid #d1d5db',
-        color: isRecording ? 'white' : '#6b7280',
+        borderRadius: isMobileRef.current && isInRecordMode ? '20px' : '50%',
+        background: buttonContent.background,
+        border: buttonContent.border,
+        color: buttonContent.color,
         fontWeight: '600',
-        width: '28px',
-        height: '28px',
+                 width: isMobileRef.current && isInRecordMode ? '100px' : '24px',
+         height: isMobileRef.current && isInRecordMode ? '32px' : '24px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        boxShadow: isRecording ? '0 2px 8px rgba(255, 77, 79, 0.3)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
+        boxShadow: isRecording || isLongPressing ? '0 2px 8px rgba(255, 77, 79, 0.3)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
         transition: 'all 0.2s ease',
-        fontSize: '12px'
+        fontSize: isMobileRef.current && isInRecordMode ? '14px' : '12px',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
       }}
-    />
+    >
+      {buttonContent.text}
+    </Button>
   );
 };
 
