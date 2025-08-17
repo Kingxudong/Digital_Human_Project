@@ -178,6 +178,24 @@ class TTSClient:
             await self.websocket.close()
             logger.info("Disconnected from TTS WebSocket service")
 
+    async def close(self):
+        """Close the TTS client and reset its state."""
+        try:
+            if self.websocket:
+                await self.websocket.close()
+                logger.info("TTS WebSocket connection closed")
+        except Exception as e:
+            logger.warning(f"Error closing TTS WebSocket: {e}")
+        finally:
+            self.websocket = None
+            self.session_id = None
+            logger.info("TTS client state reset")
+
+    def is_connected(self) -> bool:
+        """Check if WebSocket connection is active."""
+        return (self.websocket is not None and 
+                self.websocket.state == websockets.protocol.State.OPEN)
+
     async def synthesize_text(self, text: str, speaker: str, session_id: str) -> AsyncGenerator[bytes, None]:
         if not self.websocket:
             raise TTSSessionError("Not connected to WebSocket")

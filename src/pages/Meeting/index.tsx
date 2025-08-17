@@ -714,7 +714,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   // 内部发送消息函数
   const sendMessageInternal = async (messageText?: string) => {
     const textToSend = messageText || inputMessage;
-    if (!textToSend.trim() || isLoading) return;
+    if (!textToSend.trim()) return;
     
     const userMessage = {
       id: Date.now().toString(),
@@ -742,7 +742,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
         body: JSON.stringify({
           query: textToSend,
           user_id: userId,
-          live_id: `live_${roomId}_${Date.now()}`
+          live_id: `live_${roomId}`
         })
       });
       console.log('响应状态:', response.status, response.ok);
@@ -812,6 +812,17 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                           : msg
                       );
                     });
+                  } else if (data.type === 'cancelled') {
+                    // 处理取消事件
+                    console.log('收到取消事件，停止当前响应');
+                    setChatMessages(prev => 
+                      prev.map(msg => 
+                        msg.id === aiMessageId 
+                          ? { ...msg, text: msg.text + ' [已中断]' }
+                          : msg
+                      )
+                    );
+                    break; // 退出循环
                   }
                 } catch (e) {
                   console.error('解析streaming数据失败:', e, '原始数据:', line);
@@ -1022,7 +1033,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
               onChange={(e) => setInputMessage(e.target.value)}
               onPressEnter={sendMessage}
               placeholder="Type your message..."
-              disabled={isLoading}
+
               size="large"
               style={{
                 borderRadius: '25px',
@@ -1034,7 +1045,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
             <Button 
               type="primary" 
               onClick={sendMessage}
-              loading={isLoading}
+
               disabled={!inputMessage.trim()}
               size="large"
               style={{

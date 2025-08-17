@@ -215,12 +215,32 @@ def cancel_stream_by_session(session_id: str) -> int:
         return 0
 
 
-def cancel_streams_by_live_id(live_id: str) -> int:
+async def cancel_streams_by_live_id(live_id: str) -> int:
     """通过live_id取消所有相关流式会话，返回触发的事件数量。"""
     triggered = 0
     session_ids = list(live_to_sessions.get(live_id, set()))
     for sid in session_ids:
         triggered += cancel_stream_by_session(sid)
+    
+    # 立即停止数字人播放
+    if digital_human_client and digital_human_client.is_connected():
+        try:
+            await digital_human_client.interrupt_playback()
+            logger.info(f"已中断数字人播放，live_id: {live_id}")
+        except Exception as e:
+            logger.error(f"中断数字人播放时出错: {e}")
+            if "ConnectionClosed" in str(e):
+                digital_human_client.websocket = None
+                logger.info("已清理数字人连接状态，下次将重新连接")
+    
+    # 重置TTS客户端状态，避免会话状态冲突
+    if tts_client:
+        try:
+            await tts_client.close()
+            logger.info("已重置TTS客户端状态")
+        except Exception as e:
+            logger.error(f"重置TTS客户端状态时出错: {e}")
+    
     return triggered
 
 
@@ -796,6 +816,11 @@ async def process_query_stream(request: QueryRequest):
             logger.error("Clients not initialized")
             raise HTTPException(status_code=500, detail="Clients not initialized")
 
+        # 取消之前的流（如果有相同的live_id）
+        if request.live_id:
+            await cancel_streams_by_live_id(request.live_id)
+            logger.info(f"已取消之前的流，live_id: {request.live_id}")
+        
         # Generate session ID if not provided
         session_id = request.session_id or str(uuid.uuid4())
         # Register cancel control for this streaming session
@@ -938,10 +963,12 @@ async def process_query_stream(request: QueryRequest):
 
                                 # 使用安全的TTS合成函数
                                 # 在TTS过程中也支持取消
+                                # 为每个句子生成唯一的session_id，避免会话冲突
+                                sentence_session_id = f"{session_id}_{llm_response_count}_{len(sentence_buffer)}"
                                 sentence_audio_chunks = await safe_tts_synthesize(
                                     text=sentence_buffer.strip(),
                                     speaker=request.speaker,
-                                    session_id=session_id,
+                                    session_id=sentence_session_id,
                                     cancel_event=cancel_event,
                                 )
 
@@ -1081,10 +1108,12 @@ async def process_query_stream(request: QueryRequest):
                                 raise Exception(f"TTS连接失败: {reconnect_error}")
 
                         # 使用安全的TTS合成函数
+                        # 为最终句子生成唯一的session_id
+                        final_session_id = f"{session_id}_final_{len(sentence_buffer)}"
                         final_audio_chunks = await safe_tts_synthesize(
                             text=sentence_buffer.strip(),
                             speaker=request.speaker,
-                            session_id=session_id,
+                            session_id=final_session_id,
                             cancel_event=cancel_event,
                         )
 
@@ -1525,7 +1554,7 @@ async def safe_tts_synthesize(
             # 确保连接可用
             await ensure_tts_connection()
             # 给重连后的服务端一个极短的稳定时间，避免收到文本却来不及产出音频
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.5)
 
             # 执行TTS合成
             audio_chunks = []
@@ -1544,18 +1573,17 @@ async def safe_tts_synthesize(
 
             except Exception as synthesis_error:
                 logger.error(f"TTS合成过程中出现错误: {synthesis_error}")
-                # 如果是连接相关错误，尝试重新连接
-                if "ConnectionClosed" in str(synthesis_error) or "1000" in str(
-                    synthesis_error
-                ):
-                    logger.warning("检测到WebSocket连接错误，将尝试重新连接")
+                # 如果是连接相关错误或会话错误，尝试重新连接
+                if ("ConnectionClosed" in str(synthesis_error) or 
+                    "1000" in str(synthesis_error) or
+                    "Failed to start session" in str(synthesis_error) or
+                    "SessionFailed" in str(synthesis_error)):
+                    logger.warning("检测到WebSocket连接或会话错误，将尝试重新连接")
                     # 强制重新连接
                     try:
-                        if tts_client.websocket:
-                            await tts_client.websocket.close()
+                        await tts_client.close()
                     except:
                         pass
-                    tts_client.websocket = None
                     raise synthesis_error
                 else:
                     raise synthesis_error
