@@ -280,19 +280,27 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   const [autoPlayFailUser, setAutoPlayFailUser] = useState<string[]>([]);
   const playStatus = useRef<{ [key: string]: { audio: boolean; video: boolean } }>({});
   const autoPlayFailUserdRef = useRef<string[]>([]);
-  
+
   // 聊天相关状态
-  const [chatMessages, setChatMessages] = useState<Array<{id: string, text: string, timestamp: Date, sender: 'user' | 'ai'}>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ id: string, text: string, timestamp: Date, sender: 'user' | 'ai' }>>([]);
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  
+  const [isMobile, setIsMobile] = useState(false);
+
+  // 检测是否为移动端
+  useEffect(() => {
+    const mobileCheck = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setIsMobile(mobileCheck);
+  }, []);
+
   // 语音录音相关状态
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  
+  const [isInRecordMode, setIsInRecordMode] = useState<boolean>(false); // 是否进入录音模式
+
   // 前端录音模式相关状态
   const [recordingStatus, setRecordingStatus] = useState<string>('未连接');
   const [sttResults, setSttResults] = useState<string[]>([]);
-  
+
   // STT相关状态
   const [sttEnabled, setSttEnabled] = useState<boolean>(false);
   const [digitalHumanJoined, setDigitalHumanJoined] = useState<boolean>(false);
@@ -301,8 +309,8 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   const [currentLiveId, setCurrentLiveId] = useState<string>('');
 
   // 使用useMemo确保前端录音的sessionId在组件生命周期内保持稳定
-  const frontendSessionId = useMemo(() => 
-    `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, 
+  const frontendSessionId = useMemo(() =>
+    `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     []
   );
 
@@ -326,7 +334,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
       setIsLoading(false);
       setAutoPlayFailUser([]);
       setJoinFailReason('');
-      
+
       // 重置错误计数
       resetGlobalErrorCount();
 
@@ -489,7 +497,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   const handleEventError = (e: any, VERTC: any) => {
     // 重置错误计数
     resetGlobalErrorCount();
-    
+
     if (e.errorCode === VERTC.ErrorCode.DUPLICATE_LOGIN) {
       message.error('你的账号被其他人顶下线了');
       leaveRoom(false);
@@ -570,7 +578,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
     autoPlayFailUserdRef.current = autoPlayFailUser;
   }, [autoPlayFailUser]);
 
-    // 数字人加入房间
+  // 数字人加入房间
   const joinDigitalHuman = useCallback(async () => {
     if (digitalHumanJoining || digitalHumanJoined) return;
 
@@ -601,7 +609,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
           rtc_uid: 'digital_human_develop'
         })
       });
-      
+
       if (response.ok) {
         const result = await response.json();
         console.log('数字人加入房间API响应成功:', result);
@@ -639,10 +647,10 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
       setChatMessages([]);
       setInputMessage('');
       setIsLoading(false);
-      
+
       // 重置错误计数
       resetGlobalErrorCount();
-      
+
       // 如果数字人已加入，先让数字人离开房间
       if (currentLiveId) {
         console.log('正在让数字人离开房间:', currentLiveId);
@@ -650,7 +658,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
           const response = await fetch(`${config.apiBaseUrl}/api/digital_human_develop/leave_room/${currentLiveId}`, {
             method: 'DELETE',
           });
-          
+
           if (response.ok) {
             console.log('数字人成功离开房间');
           } else {
@@ -682,14 +690,14 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   // 前端录音相关处理函数
   const handleFrontendSTTResult = (text: string, isFinal: boolean, confidence: number) => {
     console.log('🎯 父组件收到前端STT结果:', text, '最终结果:', isFinal, '置信度:', confidence);
-    
+
     if (isFinal) {
       console.log('🎯 处理最终STT结果，设置输入消息:', text);
       setInputMessage(text);
       setSttResults(prev => [...prev, text]);
-      // 自动发送识别到的文本
+      // 桌面端自动发送识别到的文本
       if (text.trim()) {
-        console.log('🎯 自动发送识别到的文本到数字人:', text);
+        console.log('🎯 桌面端自动发送识别到的文本到数字人:', text);
         sendMessageInternal(text);
       } else {
         console.log('🎯 STT结果为空，跳过发送');
@@ -699,6 +707,22 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
       console.log('🎯 处理中间STT结果，更新输入消息:', text);
       setInputMessage(text);
     }
+  };
+
+  // 移动端直接发送处理函数
+  const handleMobileDirectSend = (text: string) => {
+    console.log('📱 移动端直接发送消息:', text);
+
+    if (text === 'TEXT_MODE') {
+      // 切换到文本输入模式
+      console.log('📱 切换到文本输入模式');
+      setIsInRecordMode(false);
+      return;
+    }
+
+    // 移动端不设置输入框，直接发送
+    console.log('📱 准备发送消息给数字人:', text);
+    sendMessageInternal(text);
   };
 
   const handleRecordingError = (error: string) => {
@@ -715,14 +739,14 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   const sendMessageInternal = async (messageText?: string) => {
     const textToSend = messageText || inputMessage;
     if (!textToSend.trim()) return;
-    
+
     const userMessage = {
       id: Date.now().toString(),
       text: textToSend,
       timestamp: new Date(),
       sender: 'user' as const
     };
-    
+
     setChatMessages(prev => {
       console.log('添加用户消息:', userMessage);
       const newMessages = [...prev, userMessage];
@@ -731,7 +755,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
     });
     setInputMessage('');
     setIsLoading(true);
-    
+
     try {
       console.log('发送消息:', textToSend, '用户ID:', userId, '房间ID:', roomId);
       const response = await fetch(`${config.apiBaseUrl}/api/query/stream`, {
@@ -746,11 +770,11 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
         })
       });
       console.log('响应状态:', response.status, response.ok);
-      
+
       if (response.ok) {
         const reader = response.body?.getReader();
         let aiMessageId = (Date.now() + 1).toString();
-        
+
         // 先创建一个空的AI消息
         const initialAiMessage = {
           id: aiMessageId,
@@ -764,28 +788,28 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
           console.log('添加AI消息后总数量:', newMessages.length);
           return newMessages;
         });
-        
+
         if (reader) {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             const chunk = new TextDecoder().decode(value);
             const lines = chunk.split('\n');
-            
+
             for (const line of lines) {
               if (line.startsWith('data: ')) {
                 try {
                   const data = JSON.parse(line.slice(6));
                   console.log('收到streaming数据:', data);
-                  
+
                   // 处理不同类型的streaming数据
                   if (data.type === 'text_chunk' && data.accumulated_text) {
                     // 使用accumulated_text来显示完整的累积文本
                     const newText = data.accumulated_text;
-                    setChatMessages(prev => 
-                      prev.map(msg => 
-                        msg.id === aiMessageId 
+                    setChatMessages(prev =>
+                      prev.map(msg =>
+                        msg.id === aiMessageId
                           ? { ...msg, text: newText }
                           : msg
                       )
@@ -793,9 +817,9 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                   } else if (data.type === 'complete' && data.full_text) {
                     // 当收到完整响应时，确保显示完整文本
                     const newText = data.full_text;
-                    setChatMessages(prev => 
-                      prev.map(msg => 
-                        msg.id === aiMessageId 
+                    setChatMessages(prev =>
+                      prev.map(msg =>
+                        msg.id === aiMessageId
                           ? { ...msg, text: newText }
                           : msg
                       )
@@ -806,8 +830,8 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                       const currentMsg = prev.find(msg => msg.id === aiMessageId);
                       const currentText = currentMsg ? currentMsg.text : '';
                       const newText = currentText + data.token;
-                      return prev.map(msg => 
-                        msg.id === aiMessageId 
+                      return prev.map(msg =>
+                        msg.id === aiMessageId
                           ? { ...msg, text: newText }
                           : msg
                       );
@@ -815,9 +839,9 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                   } else if (data.type === 'cancelled') {
                     // 处理取消事件
                     console.log('收到取消事件，停止当前响应');
-                    setChatMessages(prev => 
-                      prev.map(msg => 
-                        msg.id === aiMessageId 
+                    setChatMessages(prev =>
+                      prev.map(msg =>
+                        msg.id === aiMessageId
                           ? { ...msg, text: msg.text + ' [已中断]' }
                           : msg
                       )
@@ -849,7 +873,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
     try {
       // 使用单按钮控制API开始录音
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       const response = await fetch(`${config.apiBaseUrl}/api/voice/single_button_control`, {
         method: 'POST',
         headers: {
@@ -863,7 +887,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
         setIsRecording(true);
         // 存储sessionId用于停止录音
@@ -983,10 +1007,10 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                   <div style={{ marginBottom: '12px', color: '#ef4444' }}>
                     Digital Human join failed: {digitalHumanJoinError}
                   </div>
-                  <Button 
-                    type="primary" 
+                  <Button
+                    type="primary"
                     onClick={joinDigitalHuman}
-                    style={{ 
+                    style={{
                       borderRadius: '8px',
                       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                       border: 'none'
@@ -1001,12 +1025,12 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
             </WaitingIndicator>
           )}
         </VideoContainer>
-        
+
         <ChatContainer>
           <ChatHeader>
             <ChatTitle>AI Conversation</ChatTitle>
           </ChatHeader>
-          
+
           <ChatMessages>
             {chatMessages.length === 0 ? (
               <div style={{ textAlign: 'center', color: '#888', padding: '20px' }}>
@@ -1026,100 +1050,118 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
               ))
             )}
           </ChatMessages>
-          
+
           <ChatInput>
             <div style={{
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
-              width: '100%'
+              width: '100%',
+              gap: '12px'
             }}>
-              <Input
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onPressEnter={sendMessage}
-                placeholder="Type your message..."
-                size="large"
-                                 style={{
-                   borderRadius: '25px',
-                   border: '2px solid #e2e8f0',
-                   boxShadow: 'none',
-                   fontSize: '16px',
-                   paddingRight: '120px', // 为录音按钮和发送按钮留出空间
-                   width: '100%'
-                 }}
-              />
-              
-                             {/* 录音按钮 - 放在输入框内部右侧 */}
-               <div style={{
-                 position: 'absolute',
-                 right: '80px', // 为发送按钮留出空间
-                 top: '50%',
-                 transform: 'translateY(-50%)',
-                 zIndex: 10,
-                 display: 'flex',
-                 alignItems: 'center'
-               }}>
-                <AudioRecorder
-                  onSTTResult={handleFrontendSTTResult}
-                  onError={handleRecordingError}
-                  onStatusChange={handleRecordingStatusChange}
-                  websocketUrl="ws://localhost:9002/audio"
-                  sessionId={frontendSessionId}
+              <div style={{
+                position: 'relative',
+                flex: 1
+              }}>
+                <Input
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onPressEnter={sendMessage}
+                  placeholder={isMobile && isInRecordMode ? "" : "Type your message..."}
+                  disabled={isMobile && isInRecordMode}
+                  size="large"
+                  style={{
+                    borderRadius: '25px',
+                    border: '2px solid #e2e8f0',
+                    boxShadow: 'none',
+                    fontSize: '16px',
+                    paddingRight: '52px', // 为录音按钮留空间
+                    width: '100%',
+                    position: 'relative',
+                    backgroundColor: '#ffffff' // 使用白色背景
+                  }}
                 />
+
+                {/* 录音按钮 - 放在输入框内部右侧 */}
+                <div style={{
+                  position: 'absolute',
+                  right: isMobile && isInRecordMode ? '0px' : '8px',
+                  top: isMobile && isInRecordMode ? '0px' : '50%',
+                  transform: isMobile && isInRecordMode ? 'none' : 'translateY(-50%)',
+                  zIndex: isMobile && isInRecordMode ? 15 : 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  width: isMobile && isInRecordMode ? '100%' : 'auto',
+                  height: isMobile && isInRecordMode ? '100%' : 'auto',
+                  justifyContent: isMobile && isInRecordMode ? 'center' : 'flex-end',
+                  padding: isMobile && isInRecordMode ? '0' : '0',
+                  left: isMobile && isInRecordMode ? '0px' : 'auto'
+                }}>
+                  <AudioRecorder
+                    onSTTResult={handleFrontendSTTResult}
+                    onError={handleRecordingError}
+                    onStatusChange={handleRecordingStatusChange}
+                    websocketUrl="ws://localhost:9002/audio"
+                    sessionId={frontendSessionId}
+                    onMobileDirectSend={handleMobileDirectSend}
+                    hasInputText={inputMessage.trim().length > 0}
+                    onSendText={sendMessage}
+                    isInRecordMode={isInRecordMode}
+                    onRecordModeChange={setIsInRecordMode}
+                  />
+                </div>
               </div>
-              
-                             {/* 发送按钮 */}
-               <Button 
-                 type="primary" 
-                 onClick={sendMessage}
-                 disabled={!inputMessage.trim()}
-                 size="middle"
-                 style={{
-                   borderRadius: '20px',
-                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                   border: 'none',
-                   boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
-                   fontWeight: '600',
-                   minWidth: '60px',
-                   height: '32px',
-                   marginLeft: '8px',
-                   fontSize: '12px'
-                 }}
-               >
-                 Send
-               </Button>
-            </div>
-            
-            {/* Hang Up 按钮 */}
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'center',
-              marginTop: '12px'
-            }}>
-                             <Button 
-                 type="default" 
-                 onClick={handleHangUp}
-                 size="middle"
-                 style={{
-                   borderRadius: '20px',
-                   border: '2px solid #ef4444',
-                   color: '#ef4444',
-                   fontWeight: '600',
-                   minWidth: '60px',
-                   height: '32px',
-                   fontSize: '12px'
-                 }}
-               >
-                 Hang Up
-               </Button>
+
+              {/* 发送按钮 - 移动端隐藏 */}
+              {!isMobile && (
+                <Button
+                  type="primary"
+                  onClick={sendMessage}
+                  disabled={!inputMessage.trim()}
+                  size="large"
+                  style={{
+                    borderRadius: '25px',
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    border: 'none',
+                    boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
+                    fontWeight: '600',
+                    minWidth: '80px',
+                    height: '40px',
+                    fontSize: '14px',
+                    color: '#ffffff'
+                  }}
+                >
+                  Send
+                </Button>
+              )}
+
+              {/* Hang Up 按钮 */}
+              <Button
+                type="default"
+                onClick={handleHangUp}
+                size="large"
+                style={{
+                  borderRadius: '25px',
+                  border: '2px solid #ef4444',
+                  color: '#ef4444',
+                  fontWeight: '600',
+                  minWidth: '80px',
+                  height: '40px',
+                  fontSize: '14px',
+                  background: '#ffffff',
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.2)',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                Hang Up
+              </Button>
             </div>
           </ChatInput>
-          
+
           {/* STT语音识别组件已移除 - 使用简化的语音输入 */}
         </ChatContainer>
       </Container>
-      
+
 
       <AutoPlayModal handleAutoPlay={handleAutoPlay} autoPlayFailUser={autoPlayFailUser} />
     </>
