@@ -297,6 +297,16 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isInRecordMode, setIsInRecordMode] = useState<boolean>(false); // 是否进入录音模式
 
+  // 包装setIsInRecordMode函数，添加调试信息
+  const handleRecordModeChange = useCallback((newMode: boolean) => {
+    console.log('📱 父组件收到录音模式变化:', {
+      from: isInRecordMode,
+      to: newMode,
+      timestamp: new Date().toISOString()
+    });
+    setIsInRecordMode(newMode);
+  }, [isInRecordMode]);
+
   // 前端录音模式相关状态
   const [recordingStatus, setRecordingStatus] = useState<string>('未连接');
   const [sttResults, setSttResults] = useState<string[]>([]);
@@ -695,13 +705,8 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
       console.log('🎯 处理最终STT结果，设置输入消息:', text);
       setInputMessage(text);
       setSttResults(prev => [...prev, text]);
-      // 桌面端自动发送识别到的文本
-      if (text.trim()) {
-        console.log('🎯 桌面端自动发送识别到的文本到数字人:', text);
-        sendMessageInternal(text);
-      } else {
-        console.log('🎯 STT结果为空，跳过发送');
-      }
+      // 不自动发送，让用户手动发送
+      console.log('🎯 STT结果已设置到输入框，等待用户手动发送');
     } else {
       // 中间结果，可以显示在界面上
       console.log('🎯 处理中间STT结果，更新输入消息:', text);
@@ -1107,7 +1112,7 @@ const Meeting: React.FC<Record<string, unknown>> = () => {
                     hasInputText={inputMessage.trim().length > 0}
                     onSendText={sendMessage}
                     isInRecordMode={isInRecordMode}
-                    onRecordModeChange={setIsInRecordMode}
+                    onRecordModeChange={handleRecordModeChange}
                   />
                 </div>
               </div>
