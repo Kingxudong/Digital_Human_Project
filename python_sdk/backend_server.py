@@ -475,11 +475,18 @@ async def join_room(request: JoinRoomRequest):
     )
     try:
         global digital_human_client, connection_lock, pending_requests
-
+        # 功能：确保数字人客户端已正确初始化，如果未初始化则返回500错误。
         if not digital_human_client:
             raise HTTPException(
                 status_code=500, detail="Digital human client not initialized"
             )
+
+        # 处理逻辑：
+        # 检查是否存在相同 live_id 的活跃会话
+        # 如果会话存在且状态为"active"，验证客户端连接状态
+        # 如果客户端已连接且 live_id 匹配，直接返回成功
+        # 如果连接状态异常，清理过期会话
+
 
         # Check if session already exists and validate its state
         if request.live_id in active_sessions:
@@ -520,6 +527,7 @@ async def join_room(request: JoinRoomRequest):
                 )
                 del active_sessions[request.live_id]
 
+        # 功能：防止同一 live_id 的重复请求，避免资源冲突。
         # Check for pending request
         if request.live_id in pending_requests:
             pending_task = pending_requests[request.live_id]
@@ -529,6 +537,10 @@ async def join_room(request: JoinRoomRequest):
                     status_code=429, detail="请求正在进行中，请稍后重试"
                 )
 
+        # 功能：
+        # 检查是否在冷却期内（默认10秒）
+        # 防止频繁失败请求对系统造成压力
+        # 提供友好的错误提示
         # Check for cooldown period after failed request
         current_time = asyncio.get_event_loop().time()
         if request.live_id in failed_requests:
@@ -545,6 +557,11 @@ async def join_room(request: JoinRoomRequest):
             else:
                 # Remove from failed requests if cooldown period has passed
                 del failed_requests[request.live_id]
+
+        # 并发控制机制：
+        # 使用 asyncio.Lock() 防止并发连接
+        # 在锁内再次检查状态，确保原子性
+        # 如果已有其他连接，跳过连接过程
 
         # Use connection lock to prevent concurrent connection attempts
         async with connection_lock:
@@ -570,6 +587,26 @@ async def join_room(request: JoinRoomRequest):
                 )
                 # Continue directly to start_live_rtc
 
+            # 重试策略
+            # 最多重试3次
+            # 每次重试间隔3秒
+            # 连接超时45秒，健康检查超时10秒
+            # 失败时主动断开连接清理状态
+            # 使用 asyncio.wait_for 确保连接过程有超时机制
+            # 使用 retry_count 跟踪重试次数
+            # 使用 max_retries 限制最大重试次数
+            # 使用 asyncio.sleep 等待重试间隔
+            # 使用 raise 抛出异常，确保错误被捕获并处理
+            # 使用 try-except 捕获连接过程中的各种异常
+            # 使用 logger.warning 记录重试过程中的状态
+            # 使用 logger.error 记录最终失败原因
+            # 使用 raise 抛出最终的 HTTPException 错误
+            # 使用 finally 清理部分状态，确保资源释放
+            # 使用 asyncio.create_task 创建任务，确保异步执行
+            # 使用 asyncio.wait_for 等待任务完成
+            # 使用 asyncio.TimeoutError 处理任务超时
+            
+            
             # Create task for this request
             async def join_room_task():
                 try:
@@ -666,6 +703,7 @@ async def join_room(request: JoinRoomRequest):
                             # Wait before retry
                             await asyncio.sleep(3)
 
+
                     # Use provided config or defaults
                     avatar_type = (
                         AvatarType.THREE_MIN
@@ -678,6 +716,16 @@ async def join_room(request: JoinRoomRequest):
                     rtc_uid = request.rtc_uid or DigitalHumanConfig.RTC_UID
                     rtc_token = request.rtc_token or DigitalHumanConfig.RTC_TOKEN
 
+                    # 直播启动：
+                    # 调用数字人客户端的 start_live_rtc 方法
+                    # 设置30秒超时，避免长时间等待
+                    # 传入所有必要的配置参数
+                    # 使用 asyncio.wait_for 确保直播过程有超时机制
+                    # 使用 HTTPException 返回用户友好的错误信息
+                    # 使用 logger.info 记录成功状态
+                    # 使用 logger.error 记录最终失败原因
+                    # 使用 raise 抛出最终的 HTTPException 错误
+                    # 使用 finally 清理部分状态，确保资源释放
                     # Start live streaming with optimized timeout
                     try:
                         result = await asyncio.wait_for(
@@ -727,6 +775,12 @@ async def join_room(request: JoinRoomRequest):
                     if request.live_id in pending_requests:
                         del pending_requests[request.live_id]
 
+            # 任务管理：
+            # 将核心逻辑包装为异步任务
+            # 跟踪待处理请求
+            # 设置90秒总超时
+            # 超时时清理任务状态
+
             # Create and track the task
             task = asyncio.create_task(join_room_task())
             pending_requests[request.live_id] = task
@@ -740,7 +794,11 @@ async def join_room(request: JoinRoomRequest):
                 if request.live_id in pending_requests:
                     del pending_requests[request.live_id]
                 raise HTTPException(status_code=408, detail="请求超时，请稍后重试")
-
+    # 错误处理策略：
+    # 区分HTTP异常和一般异常
+    # 记录失败请求到冷却期
+    # 清理部分状态避免资源泄漏
+    # 提供用户友好的错误消息
     except HTTPException:
         # Record failed request for cooldown period
         failed_requests[request.live_id] = asyncio.get_event_loop().time()
@@ -812,25 +870,41 @@ async def process_query_stream(request: QueryRequest):
         logger.info(f"Live ID: {request.live_id}")
         logger.info(f"Session ID: {request.session_id}")
 
+        # 功能：确保所有必需的客户端（LLM、TTS、数字人）都已正确初始化。
         if not all([llm_client, tts_client, digital_human_client]):
             logger.error("Clients not initialized")
             raise HTTPException(status_code=500, detail="Clients not initialized")
 
+        # 功能：
+        # 如果存在相同 live_id 的活跃流式会话，先取消它们
+        # 防止多个流式会话同时处理，避免资源冲突
         # 取消之前的流（如果有相同的live_id）
         if request.live_id:
             await cancel_streams_by_live_id(request.live_id)
             logger.info(f"已取消之前的流，live_id: {request.live_id}")
         
+        # 处理逻辑：
+        # 如果没有提供 session_id，生成新的UUID
+        # 注册流式会话，获取取消事件对象
+        # 用于后续的会话管理和取消控制
+
         # Generate session ID if not provided
         session_id = request.session_id or str(uuid.uuid4())
         # Register cancel control for this streaming session
         cancel_event = register_stream_session(session_id, request.live_id)
         logger.info(f"Using session ID: {session_id}")
 
+        # 功能：
+        # 为当前用户创建或获取LLM对话上下文
+        # 确保对话的连续性和上下文保持
         # Create LLM conversation if needed
         conversation_id = llm_client.create_conversation(request.user_id)
         logger.info(f"Created/Using conversation ID: {conversation_id}")
-
+# 这里需要重点检查 标点1 是否可以增加连接逻辑
+        # 功能：
+        # 检查TTS WebSocket连接状态
+        # 如果未连接，建立连接
+        # 确保TTS服务可用
         # Connect TTS if not connected
         if not tts_client.websocket:
             logger.info("Connecting to TTS service...")
@@ -858,6 +932,7 @@ async def process_query_stream(request: QueryRequest):
 
                 logger.info(f"Starting stream pipeline for session: {session_id}")
 
+                # 功能：向前端发送流式处理开始信号，包含会话ID和原始查询。
                 # Send start signal
                 start_data = {
                     "type": "start",
@@ -868,11 +943,17 @@ async def process_query_stream(request: QueryRequest):
                 logger.info(f"Sent start signal for query: {request.query}")
 
                 # Early cancellation check
+                # 功能：在开始处理前检查是否已被取消，避免不必要的资源消耗。
                 if cancel_event.is_set():
                     yield f"data: {json.dumps({"type": "cancelled", "session_id": session_id})}\n\n"
                     return
 
                 # Stream LLM responses
+                # 处理逻辑：
+                # 流式获取LLM响应
+                # 在每个响应块之间检查取消状态
+                # 提取文本内容并累积到缓冲区
+                # 立即向前端返回文本块，实现实时显示
                 logger.info(f"Starting LLM chat stream...")
                 llm_response_count = 0
                 for llm_response in llm_client.chat_stream(
@@ -880,6 +961,7 @@ async def process_query_stream(request: QueryRequest):
                     conversation_id=conversation_id,
                     query=request.query,
                 ):
+                    # 功能：在每个响应块之间检查取消状态，避免不必要的资源消耗。
                     # Check cancellation between chunks
                     if cancel_event.is_set():
                         yield f"data: {json.dumps({"type": "cancelled", "session_id": session_id})}\n\n"
@@ -887,6 +969,7 @@ async def process_query_stream(request: QueryRequest):
                     llm_response_count += 1
                     logger.debug(f"LLM response #{llm_response_count}: {llm_response}")
                     # Extract text content from LLM response
+                    # 功能：提取文本内容并累积到缓冲区，实现实时显示。
                     if "answer" in llm_response:
                         text_chunk = llm_response["answer"]
                         text_buffer += text_chunk
@@ -901,6 +984,10 @@ async def process_query_stream(request: QueryRequest):
                         yield f"data: {json.dumps(text_data)}\n\n"
 
                         # Check if we have a complete sentence
+                        # 功能：
+                        # 检测句子结束标点符号
+                        # 当检测到完整句子时，发送句子完成信号
+                        # 准备进行TTS音频合成
                         if any(
                             punct in sentence_buffer
                             for punct in ["。", "！", "？", ".", "!", "?"]
@@ -909,6 +996,7 @@ async def process_query_stream(request: QueryRequest):
                                 f"Complete sentence detected: {sentence_buffer.strip()}"
                             )
                             # Send sentence completion signal
+                            # 功能：发送句子完成信号，准备进行TTS音频合成。
                             sentence_data = {
                                 "type": "sentence_complete",
                                 "sentence": sentence_buffer.strip(),
@@ -917,6 +1005,7 @@ async def process_query_stream(request: QueryRequest):
                             yield f"data: {json.dumps(sentence_data)}\n\n"
 
                             # Send sentence to TTS and get audio
+                            # 功能：将句子发送到TTS服务，获取音频数据。
                             try:
                                 request.speaker = (
                                     "multi_female_shuangkuaisisi_moon_bigtts"
@@ -926,6 +1015,10 @@ async def process_query_stream(request: QueryRequest):
                                 )
 
                                 # 检查TTS连接状态，如果断开则重新连接
+                                # 功能：
+                                # 检查TTS WebSocket连接状态
+                                # 如果连接断开，尝试重新连接
+                                # 确保TTS服务可用性
                                 websocket_closed = False
                                 try:
                                     if not tts_client.websocket:
@@ -964,6 +1057,9 @@ async def process_query_stream(request: QueryRequest):
                                 # 使用安全的TTS合成函数
                                 # 在TTS过程中也支持取消
                                 # 为每个句子生成唯一的session_id，避免会话冲突
+                                # 调用安全的TTS合成函数
+                                # 支持取消操作
+                                # 返回音频块列表
                                 sentence_session_id = f"{session_id}_{llm_response_count}_{len(sentence_buffer)}"
                                 sentence_audio_chunks = await safe_tts_synthesize(
                                     text=sentence_buffer.strip(),
@@ -973,6 +1069,11 @@ async def process_query_stream(request: QueryRequest):
                                 )
 
                                 # 处理音频片段
+                                # 处理逻辑：
+                                # 遍历每个音频块
+                                # 检查取消状态
+                                # 驱动数字人播放音频
+                                # 向前端返回音频进度信息
                                 for audio_chunk_count, audio_chunk in enumerate(
                                     sentence_audio_chunks, 1
                                 ):
@@ -993,6 +1094,7 @@ async def process_query_stream(request: QueryRequest):
                                     #     logger.error(f"Failed to save TTS audio chunk: {save_error}")
 
                                     # Convert audio to digital human format and drive avatar
+                                    # 功能：将音频块转换为数字人格式，并驱动数字人播放音频。
                                     if (
                                         digital_human_client.websocket
                                         and request.live_id
@@ -1022,6 +1124,7 @@ async def process_query_stream(request: QueryRequest):
                                         )
 
                                     # Yield audio progress info
+                                    # 功能：向前端返回音频进度信息。
                                     audio_data = {
                                         "type": "audio_chunk",
                                         "sentence": sentence_buffer.strip(),
@@ -1042,6 +1145,10 @@ async def process_query_stream(request: QueryRequest):
                                 #         logger.error(f"Failed to save complete sentence audio: {save_error}")
 
                                 # Send sentence processing complete signal
+                                # 功能：发送句子处理完成信号，准备进行数字人驱动。
+                                # 功能：
+                                # 发送句子处理完成信号
+                                # 清空句子缓冲区，准备处理下一个句子
                                 logger.info(
                                     f"TTS synthesis completed for sentence: {sentence_buffer.strip()}"
                                 )
@@ -1052,6 +1159,11 @@ async def process_query_stream(request: QueryRequest):
                                 }
                                 yield f"data: {json.dumps(sentence_complete_data)}\n\n"
 
+                            # 功能：
+                            # 捕获TTS处理过程中的异常
+                            # 记录详细错误信息
+                            # 向前端返回错误信号
+                            # 继续处理后续内容
                             except Exception as tts_error:
                                 logger.error(
                                     f"TTS error for sentence '{sentence_buffer.strip()}': {tts_error}"
@@ -1069,6 +1181,9 @@ async def process_query_stream(request: QueryRequest):
                             sentence_buffer = ""
 
                 # Process any remaining text
+                # 功能：
+                # 处理LLM响应结束后剩余的文本
+                # 确保所有文本都得到处理
                 if sentence_buffer.strip() and not cancel_event.is_set():
                     # Send final sentence signal
                     final_sentence_data = {
@@ -1141,6 +1256,10 @@ async def process_query_stream(request: QueryRequest):
                         yield f"data: {json.dumps(final_error_data)}\n\n"
 
                 # Finish streaming audio to digital human
+                # 功能：
+                # 通知数字人音频流结束
+                # 确保数字人动画正确结束
+                # 错误不影响整体流程
                 if (
                     digital_human_client.websocket
                     and request.live_id
@@ -1156,6 +1275,10 @@ async def process_query_stream(request: QueryRequest):
                         # Don't let this error stop the pipeline completion
 
                 # Send completion signal with full text
+                # 功能：
+                # 发送流式处理完成信号
+                # 包含完整的生成文本
+                # 记录处理统计信息
                 logger.info(f"=== Stream Pipeline Completed ===")
                 logger.info(f"Session ID: {session_id}")
                 logger.info(f"Full generated text: {text_buffer}")
@@ -1169,6 +1292,7 @@ async def process_query_stream(request: QueryRequest):
                 }
                 yield f"data: {json.dumps(complete_data)}\n\n"
 
+            # 功能：处理流式处理过程中的取消事件。
             except asyncio.CancelledError:
                 logger.info(f"Stream pipeline cancelled: {session_id}")
                 try:
@@ -1176,6 +1300,7 @@ async def process_query_stream(request: QueryRequest):
                 except Exception:
                     pass
                 return
+            # 功能：处理流式处理过程中的一般异常。
             except Exception as e:
                 logger.error(f"=== Error in Stream Pipeline ===")
                 logger.error(f"Session ID: {session_id}")
@@ -1190,8 +1315,12 @@ async def process_query_stream(request: QueryRequest):
                 yield f"data: {json.dumps(error_data)}\n\n"
             finally:
                 # cleanup stream registration
+                # 功能：清理流式会话注册。  
                 cleanup_stream_session(session_id)
-
+        # 功能：
+        # 返回Server-Sent Events (SSE) 流式响应
+        # 设置适当的HTTP头
+        # 支持实时数据传输
         return StreamingResponse(
             stream_pipeline(),
             media_type="text/event-stream",
@@ -1219,27 +1348,44 @@ async def process_query_stream(request: QueryRequest):
 async def leave_room(live_id: str):
     """Make digital human leave RTC room."""
     try:
+        # 功能：
+        # 声明需要访问的全局变量
+        # 记录离开房间的请求日志
         global digital_human_client, active_sessions, pending_requests, tts_client, stt_client
 
         logger.info(f"Attempting to leave room: {live_id}")
 
         # 先取消与该live_id相关的所有流式会话
+        # 功能：
+        # 调用 cancel_streams_by_live_id 函数取消所有与该 live_id 相关的流式会话
+        # 包括正在进行的LLM对话、TTS合成等流式处理
+        # 返回被取消的会话数量
         cancelled = cancel_streams_by_live_id(live_id)
         logger.info(f"Triggered {cancelled} stream cancellations for live_id={live_id}")
 
         # Clean up pending requests for this live_id
+        # 处理逻辑：
+        # 检查是否存在该 live_id 的待处理请求
+        # 如果请求任务未完成，取消该任务
+        # 从待处理请求字典中删除该条目
+        # 防止资源泄漏和状态不一致
         if live_id in pending_requests:
             pending_task = pending_requests[live_id]
             if not pending_task.done():
                 logger.info(f"Cancelling pending request for {live_id}")
                 pending_task.cancel()
             del pending_requests[live_id]
-
+        # 功能：检查是否存在该 live_id 的活跃会话，如果存在则进行后续处理。
         if live_id in active_sessions:
             session = active_sessions[live_id]
             logger.info(f"Found active session for {live_id}: {session}")
 
             # Stop live streaming if digital human client is available
+            # 处理逻辑：
+            # 检查数字人客户端是否存在
+            # 验证WebSocket连接状态和 live_id 匹配
+            # 调用 stop_live() 方法停止直播
+            # 即使停止失败也继续执行清理流程
             if digital_human_client:
                 try:
                     # Check if the client is connected and the live_id matches
@@ -1259,11 +1405,19 @@ async def leave_room(live_id: str):
                     # Continue with cleanup even if stop fails
 
                 # Always reset the live_id to ensure clean state
+                # 功能：
+                # 重置数字人客户端的 live_id 为 None
+                # 确保客户端状态清洁，避免状态混乱
                 if digital_human_client.live_id == live_id:
                     digital_human_client.live_id = None
                     logger.info(f"Reset digital human client live_id for {live_id}")
 
                 # Force disconnect if in bad state to ensure clean reconnection
+                # 处理逻辑：
+                # 检查WebSocket连接状态
+                # 如果连接未关闭，强制断开连接
+                # 确保下次连接时状态清洁
+                # 错误不影响整体流程
                 try:
                     if (
                         digital_human_client.websocket
@@ -1280,10 +1434,18 @@ async def leave_room(live_id: str):
                     )
 
             # Remove from active sessions
+            # 功能：
+            # 从 active_sessions 字典中删除该会话
+            # 释放会话占用的内存资源
             del active_sessions[live_id]
             logger.info(f"Removed {live_id} from active sessions")
 
             # 断开TTS/STT连接（如果存在）
+            # 处理逻辑：
+            # 检查TTS客户端和WebSocket连接状态
+            # 断开TTS WebSocket连接
+            # 记录断开原因
+            # 错误不影响整体流程
             try:
                 if tts_client and tts_client.websocket:
                     await tts_client.disconnect()
@@ -1291,6 +1453,12 @@ async def leave_room(live_id: str):
             except Exception as e:
                 logger.warning(f"Error disconnecting TTS on leave_room: {e}")
 
+            # 处理逻辑：
+            # 检查STT客户端连接状态
+            # 先停止语音识别
+            # 再断开STT WebSocket连接
+            # 记录断开原因
+            # 错误不影响整体流程
             try:
                 if stt_client and stt_client.is_connected:
                     await stt_client.stop_recognition()
@@ -1298,12 +1466,18 @@ async def leave_room(live_id: str):
                     logger.info("STT client disconnected due to leave_room")
             except Exception as e:
                 logger.warning(f"Error disconnecting STT on leave_room: {e}")
-
+            # 功能：返回成功响应，确保前端正确处理离开房间事件。
             return {
                 "success": True,
                 "message": f"Digital human left room {live_id}",
                 "cleaned_up": True,
             }
+            # 功能：如果会话不存在，返回成功响应，避免前端错误。
+            # 处理逻辑：
+            # 如果指定的 live_id 不存在于活跃会话中
+            # 记录日志但不报错
+            # 返回成功响应，避免前端错误
+            # 设置 cleaned_up 为 False
         else:
             logger.info(f"Session {live_id} not found in active sessions")
             # Even if session not found, return success to avoid frontend errors
@@ -1312,10 +1486,14 @@ async def leave_room(live_id: str):
                 "message": f"Session {live_id} was not active",
                 "cleaned_up": False,
             }
-
+    # 功能：捕获所有异常并记录详细错误信息。
     except Exception as e:
         logger.error(f"Failed to leave room {live_id}: {e}", exc_info=True)
         # Try to clean up anyway
+        # 处理逻辑：
+        # 即使发生异常，也尝试清理相关资源
+        # 删除活跃会话和待处理请求
+        # 记录清理过程中的错误
         try:
             if live_id in active_sessions:
                 del active_sessions[live_id]
@@ -1325,6 +1503,12 @@ async def leave_room(live_id: str):
             logger.error(f"Error during cleanup: {cleanup_error}")
 
         # Provide user-friendly error message
+        # 错误处理策略：
+        # 根据异常类型提供不同的错误消息
+        # 超时错误：提示检查网络
+        # 连接错误：提示网络异常
+        # 其他错误：通用错误消息
+        # 抛出HTTP 500异常
         error_message = "退出房间失败，请稍后重试"
         if "timeout" in str(e).lower():
             error_message = "退出超时，请稍后重试"
@@ -1354,11 +1538,20 @@ async def reset_connections():
     """
 
     try:
+        # 功能：
+        # 声明需要访问的全局变量
+        # 记录重置操作的开始日志
         global digital_human_client, tts_client, active_sessions, pending_requests, stt_client
 
         logger.info("Resetting all client connections...")
 
         # Cancel all pending requests
+        # 处理逻辑：
+        # 遍历 pending_requests 字典中的所有待处理任务
+        # 检查每个任务是否已完成
+        # 如果任务未完成，调用 task.cancel() 取消任务
+        # 清空 pending_requests 字典
+        # 记录取消的请求数量
         for live_id, task in pending_requests.items():
             if not task.done():
                 logger.info(f"Cancelling pending request for {live_id}")
@@ -1367,11 +1560,21 @@ async def reset_connections():
         logger.info("All pending requests cancelled")
 
         # Cancel all streaming sessions
+        # 处理逻辑：
+        # 遍历 active_streams 字典中的所有活跃流式会话
+        # 使用 list(active_streams.keys()) 创建副本避免修改迭代对象
+        # 对每个会话调用 cancel_stream_by_session() 函数
+        # 记录取消的流式会话数量
         for session_id in list(active_streams.keys()):
             cancel_stream_by_session(session_id)
         logger.info("All active streams cancelled")
 
         # Reset digital human client
+        # 处理逻辑：
+        # 检查数字人客户端是否存在
+        # 如果存在，调用 disconnect() 方法断开连接
+        # 记录断开连接的日志
+        # 捕获并记录断开连接过程中的异常
         if digital_human_client:
             try:
                 await digital_human_client.disconnect()
@@ -1380,14 +1583,28 @@ async def reset_connections():
                 logger.warning(f"Error disconnecting digital human client: {e}")
 
         # Reset TTS client
+        # 处理逻辑：
+        # 检查TTS客户端是否存在
+        # 如果存在，调用 disconnect() 方法断开连接
+        # 记录断开连接的日志
+        # 捕获并记录断开连接过程中的异常
+        # 如果断开失败，记录警告日志但不中断流程
         if tts_client and tts_client.websocket:
             try:
+                # 标点2 是否可以增加停止文字转语音的功能
                 await tts_client.disconnect()
                 logger.info("TTS client disconnected")
             except Exception as e:
                 logger.warning(f"Error disconnecting TTS client: {e}")
 
         # Reset STT client
+        # 处理逻辑：
+        # 检查STT客户端是否存在且已连接
+        # 使用 getattr() 安全地检查 is_connected 属性
+        # 先调用 stop_recognition() 停止语音识别
+        # 再调用 disconnect() 断开连接
+        # 记录断开成功日志
+        # 如果断开失败，记录警告日志但不中断流程
         if stt_client and getattr(stt_client, "is_connected", False):
             try:
                 await stt_client.stop_recognition()
@@ -1397,10 +1614,17 @@ async def reset_connections():
                 logger.warning(f"Error disconnecting STT client: {e}")
 
         # Clear active sessions
+        # 处理逻辑：
+        # 清空 active_sessions 字典
+        # 记录清空后的会话数量
         active_sessions.clear()
         logger.info("Active sessions cleared")
 
         # Clear stream registries
+        # 处理逻辑：
+        # 清空 active_streams 字典（流式会话注册表）
+        # 清空 live_to_sessions 字典（直播ID到会话的映射）
+        # 记录清理完成日志
         active_streams.clear()
         live_to_sessions.clear()
         logger.info("Stream registries cleared")
@@ -1440,6 +1664,10 @@ async def get_connection_status():
     """
 
     try:
+        # 处理逻辑：
+        # 创建包含数字人和TTS客户端状态的基础结构
+        # 设置默认值，后续会根据实际情况更新
+        # 使用嵌套字典结构便于前端解析
         status = {
             "digital_human_develop": {
                 "initialized": digital_human_client is not None,
@@ -1456,16 +1684,29 @@ async def get_connection_status():
         }
 
         # Check digital human client status
+        # 处理逻辑：
+        # 条件检查：首先确认数字人客户端是否已初始化
+        # 连接状态：调用 is_connected() 方法检查连接状态
+        # 直播ID：获取当前活跃的直播ID
         if digital_human_client:
             status["digital_human_develop"][
                 "connected"
             ] = digital_human_client.is_connected()
             status["digital_human_develop"]["live_id"] = digital_human_client.live_id
+            # 处理逻辑：
+            # WebSocket存在性检查：确认WebSocket对象是否存在
+            # 状态获取：获取WebSocket的当前状态（OPEN、CLOSED、CLOSING等）
+            # 状态名称：使用 .name 属性获取可读的状态名称
             if digital_human_client.websocket:
                 status["digital_human_develop"][
                     "websocket_state"
                 ] = digital_human_client.websocket.state.name
                 # Perform health check
+                # 处理逻辑：
+                # 异步健康检查：调用数字人客户端的健康检查方法
+                # 超时控制：使用 asyncio.wait_for 设置5秒超时
+                # 异常处理：如果健康检查失败，记录错误信息
+                # 状态记录：将健康检查结果和错误信息保存到状态中
                 try:
                     status["digital_human_develop"]["health_check"] = (
                         await asyncio.wait_for(
@@ -1477,6 +1718,10 @@ async def get_connection_status():
                     status["digital_human_develop"]["health_check_error"] = str(e)
 
         # Check TTS client status
+        # 处理逻辑：
+        # 客户端初始化检查：确认TTS客户端是否已初始化
+        # 连接状态判断：通过WebSocket对象是否存在来判断连接状态
+        # WebSocket状态获取：如果WebSocket存在，获取其状态名称
         if tts_client:
             status["tts"]["connected"] = tts_client.websocket is not None
             if tts_client.websocket:
@@ -1494,14 +1739,33 @@ voice_recording_sessions = {}
 
 
 # TTS连接监控和重连辅助函数
+# 功能说明：
+# 这是一个TTS连接监控和自动重连的辅助函数
+# 确保TTS WebSocket连接处于可用状态
+# 如果连接断开，自动尝试重新连接
 async def ensure_tts_connection():
     """确保TTS连接可用，如果断开则重新连接"""
+    # 处理逻辑：
+    # 全局变量声明：声明需要访问的全局TTS客户端
+    # 初始化检查：确认TTS客户端是否已正确初始化
+    # 异常抛出：如果客户端未初始化，抛出明确的错误信息
     global tts_client
 
     if not tts_client:
         raise Exception("TTS客户端未初始化")
 
     # 检查连接状态 - 使用正确的方法检查WebSocket状态
+    # 处理逻辑：
+    # 3.1 基础检查
+    # WebSocket对象检查：首先检查WebSocket对象是否存在
+    # 默认状态设置：初始假设连接正常
+    # 3.2 兼容性检查
+    # closed属性检查：检查是否有 closed 属性（某些版本的websockets库）
+    # state属性检查：检查是否有 state 属性（较新版本的websockets库）
+    # 状态名称匹配：检查状态是否为 "CLOSED" 或 "CLOSING"
+    # 3.3 防御性编程
+    # 异常处理：如果检查过程中出现异常，假设连接已断开
+    # 默认假设：如果无法确定状态，假设连接正常（避免误判）
     websocket_closed = False
     try:
         if not tts_client.websocket:
@@ -1524,6 +1788,7 @@ async def ensure_tts_connection():
     if websocket_closed:
         logger.warning("TTS WebSocket连接已断开，尝试重新连接...")
         try:
+            # 标点3 是否可以增加重连逻辑
             await tts_client.connect()
             logger.info("TTS WebSocket重新连接成功")
             return True
@@ -1540,7 +1805,17 @@ async def safe_tts_synthesize(
     session_id: str,
     cancel_event: Optional[asyncio.Event] = None,
 ):
+# 参数说明：
+# text: str - 要合成的文本内容
+# speaker: str - TTS发音人（如 "BV001_streaming"）
+# session_id: str - 会话ID，用于标识特定的合成会话
+# cancel_event: Optional[asyncio.Event] - 可选的取消事件，用于支持异步取消操作
     """安全的TTS合成，包含连接检查和重试机制和取消支持"""
+
+    # 处理逻辑：
+    # 全局变量声明：声明需要访问的全局TTS客户端
+    # 重试配置：设置最大重试次数为3次
+    # 重试计数器：初始化重试计数器为0
     global tts_client
 
     max_retries = 3
@@ -1549,14 +1824,33 @@ async def safe_tts_synthesize(
     while retry_count < max_retries:
         try:
             # Check cancellation before work
+            # 处理逻辑：
+            # 取消事件检查：在开始工作前检查是否收到取消信号
+            # 异步取消：如果取消事件被设置，立即抛出 CancelledError
+            # 提前退出：避免在已取消的情况下继续执行
+            # 标记4 是否可以增加取消逻辑
             if cancel_event and cancel_event.is_set():
                 raise asyncio.CancelledError()
             # 确保连接可用
+            # 处理逻辑：
+            # 5.1 连接确保
+            # 调用连接检查：调用 ensure_tts_connection() 确保TTS连接可用
+            # 自动重连：如果连接断开，自动尝试重新连接
+            # 5.2 稳定等待
+            # 服务端稳定：给重连后的服务端0.5秒的稳定时间
+            # 避免时序问题：防止服务端刚重连就收到文本，导致音频产出延迟
             await ensure_tts_connection()
-            # 给重连后的服务端一个极短的稳定时间，避免收到文本却来不及产出音频
             await asyncio.sleep(0.5)
 
             # 执行TTS合成
+            # 处理逻辑：
+            # 6.1 合成初始化
+            # 音频块列表：创建空列表存储音频块
+            # 异步合成：调用TTS客户端的 synthesize_text 方法
+            # 6.2 流式处理
+            # 异步迭代：使用 async for 循环处理音频流
+            # 取消检查：在每次迭代中检查取消事件
+            # 音频收集：将每个音频块添加到列表中
             audio_chunks = []
             try:
                 async for audio_chunk in tts_client.synthesize_text(
@@ -1570,7 +1864,15 @@ async def safe_tts_synthesize(
                     raise Exception("TTS produced zero audio chunks after synthesis")
                 logger.info(f"TTS合成成功，生成了 {len(audio_chunks)} 个音频片段")
                 return audio_chunks
-
+            # 处理逻辑：
+            # 8.1 错误分类
+            # 连接错误：检查是否包含 "ConnectionClosed"
+            # WebSocket错误：检查是否包含 "1000"（WebSocket关闭码）
+            # 会话错误：检查是否包含 "Failed to start session" 或 "SessionFailed"
+            # 8.2 强制重连
+            # 连接关闭：尝试关闭当前连接
+            # 异常忽略：忽略关闭过程中的异常
+            # 错误重新抛出：重新抛出原始错误以触发重试
             except Exception as synthesis_error:
                 logger.error(f"TTS合成过程中出现错误: {synthesis_error}")
                 # 如果是连接相关错误或会话错误，尝试重新连接
@@ -1579,7 +1881,7 @@ async def safe_tts_synthesize(
                     "Failed to start session" in str(synthesis_error) or
                     "SessionFailed" in str(synthesis_error)):
                     logger.warning("检测到WebSocket连接或会话错误，将尝试重新连接")
-                    # 强制重新连接
+                    # 强制重新连接 在外层实现
                     try:
                         await tts_client.close()
                     except:
@@ -1587,7 +1889,18 @@ async def safe_tts_synthesize(
                     raise synthesis_error
                 else:
                     raise synthesis_error
-
+        # 9.1 取消处理
+        # 取消检查：如果是取消异常，记录日志并重新抛出
+        # 立即退出：取消操作不进行重试
+        # 9.2 重试计数
+        # 计数器递增：增加重试计数
+        # 错误日志：记录当前重试次数和错误信息
+        # 9.3 最大重试检查
+        # 重试限制：检查是否达到最大重试次数
+        # 最终失败：如果达到限制，抛出最终失败异常
+        # 9.4 重试等待
+        # 延迟重试：等待2秒后再次尝试
+        # 避免频繁重试：给服务端恢复时间
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 logger.info("TTS合成被取消")
@@ -1608,10 +1921,23 @@ async def safe_tts_synthesize(
 @app.post("/api/voice/single_button_control")
 async def single_button_voice_control(request: Request):
     """单按钮语音控制：点击开始录音，再点击结束录音并自动输入到对话栏"""
+    # 功能说明：
+    # 这是一个POST API端点，实现单按钮语音控制
+    # 支持切换录音状态：第一次点击开始录音，第二次点击停止录音并处理
+    # 自动将识别的语音转换为文本并输入到对话栏
+
+    # 处理逻辑：
+    # 声明需要访问的全局变量
+    # voice_recording_sessions：存储录音会话状态
+    # 其他客户端用于后续的语音处理
     global voice_recording_sessions, llm_client, tts_client, digital_human_client
 
     try:
         # 解析请求体
+        # 处理逻辑：
+        # 异步解析：异步解析JSON请求体
+        # 日志记录：记录接收到的请求内容
+        # 异常处理：如果解析失败，使用空字典作为默认值
         try:
             body = await request.json()
             logger.info(f"收到单按钮语音控制请求: {body}")
@@ -1619,6 +1945,12 @@ async def single_button_voice_control(request: Request):
             body = {}
 
         # 获取参数
+        # 处理逻辑：
+        # 会话ID：如果没有提供，自动生成UUID
+        # 用户ID：默认值为 "voice_user"
+        # 操作类型：默认为 "toggle"（切换模式）
+        # 直播ID：可选的直播ID
+        # 发音人：默认TTS发音人
         session_id = body.get("session_id") or str(uuid.uuid4())
         user_id = body.get("user_id", "voice_user")
         action = body.get("action", "toggle")  # "toggle" 表示切换录音状态
@@ -1628,6 +1960,9 @@ async def single_button_voice_control(request: Request):
         logger.info(f"单按钮语音控制: session_id={session_id}, action={action}")
 
         # 检查当前录音状态
+        # 处理逻辑：
+        # 状态检查：检查当前会话是否正在录音
+        # 日志记录：记录当前操作和会话ID
         is_recording = session_id in voice_recording_sessions
 
         if not is_recording:
@@ -1636,11 +1971,19 @@ async def single_button_voice_control(request: Request):
 
             try:
                 # 创建录音器和ASR客户端
-
+                # 处理逻辑：
+                # 录音器创建：创建麦克风录音器
+                # ASR客户端：创建语音识别客户端
+                # WebSocket URL：配置ASR服务的WebSocket地址
                 recorder = MicrophoneRecorder()
                 asr_client = AsrWsClient(
                     url="wss://voice.ap-southeast-1.bytepluses.com/api/v3/sauc/bigmodel"
                 )
+
+                # 处理逻辑：
+                # 会话存储：将录音组件和配置信息存储到全局字典
+                # 时间戳：记录录音开始时间
+                # 配置保存：保存用户ID、直播ID、发音人等配置
 
                 voice_recording_sessions[session_id] = {
                     "recorder": recorder,
@@ -1652,8 +1995,11 @@ async def single_button_voice_control(request: Request):
                 }
 
                 # 开始录音
+                # 处理逻辑：
+                # 启动录音：调用录音器的开始录音方法
+                # 成功响应：返回录音已开始的状态信息
                 recorder.start_recording()
-
+                
                 return {
                     "success": True,
                     "message": "开始录音",
@@ -1661,6 +2007,9 @@ async def single_button_voice_control(request: Request):
                     "status": "recording",
                     "action": "started",
                 }
+            # 处理逻辑：
+            # 错误日志：记录录音启动失败的错误
+            # 错误响应：返回失败状态和错误信息
 
             except Exception as e:
                 logger.error(f"开始录音失败: {e}")
@@ -1677,6 +2026,10 @@ async def single_button_voice_control(request: Request):
 
             try:
                 # 获取录音会话数据
+                # 处理逻辑：
+                # 会话数据获取：从全局字典中获取录音会话数据
+                # 组件提取：提取录音器和ASR客户端
+                # 配置恢复：恢复之前保存的配置信息
                 session_data = voice_recording_sessions[session_id]
                 recorder = session_data["recorder"]
                 asr_client = session_data["asr_client"]
@@ -1703,6 +2056,15 @@ async def single_button_voice_control(request: Request):
                     }
 
                 # 使用sauc_websocket_demo中的ASR功能进行语音识别
+                # 处理逻辑：
+                # 7.4.1 WebSocket连接建立
+                # 异步上下文：使用 async with 管理ASR客户端生命周期
+                # 连接创建：建立到ASR服务的WebSocket连接
+                # 认证请求：发送客户端认证请求
+                # 7.4.2 音频流处理
+                # 流式处理：使用 async for 循环处理音频流
+                # 分段大小：根据音频数据计算合适的分段大小
+                # 最终结果：等待并获取最终的识别结果
                 logger.info("开始使用ASR进行语音识别...")
                 try:
                     # 创建ASR客户端并执行识别
@@ -1722,7 +2084,10 @@ async def single_button_voice_control(request: Request):
                             if response.is_final_result():
                                 recognition_text = response.get_text()
                                 break
-
+                        # 处理逻辑：
+                        # 成功处理：如果有识别文本，记录成功日志
+                        # 失败处理：如果没有识别文本，记录警告日志
+                        # 结果封装：将识别结果封装成标准格式
                         if recognition_text:
                             logger.info(f"ASR识别成功: {recognition_text}")
                             recognition_result = {
@@ -1737,7 +2102,10 @@ async def single_button_voice_control(request: Request):
                                 "message": "未能识别到有效语音",
                                 "final_text": "",
                             }
-
+                # 处理逻辑：
+                # 错误捕获：捕获ASR识别过程中的异常
+                # 错误日志：记录详细的错误信息
+                # 失败结果：返回识别失败的结果
                 except Exception as asr_error:
                     logger.error(f"ASR识别失败: {asr_error}")
                     recognition_result = {
@@ -1745,12 +2113,20 @@ async def single_button_voice_control(request: Request):
                         "message": f"ASR识别失败: {str(asr_error)}",
                         "final_text": "",
                     }
+                # 处理逻辑：
+                # 失败检查：检查识别是否成功
+                # 会话清理：删除录音会话
+                # 直接返回：返回识别失败的结果
 
                 if not recognition_result["success"]:
                     # 清理录音会话
                     del voice_recording_sessions[session_id]
                     return recognition_result
-
+                # 处理逻辑：
+                # 文本提取：获取最终识别的文本
+                # 空文本检查：检查识别文本是否为空
+                # 会话清理：删除录音会话
+                # 错误返回：返回无语音识别的错误
                 recognized_text = recognition_result["final_text"]
 
                 if not recognized_text:
@@ -1763,6 +2139,11 @@ async def single_button_voice_control(request: Request):
                         "status": "no_speech",
                     }
 
+                # 处理逻辑：
+                # 成功日志：记录语音识别完成的日志
+                # 会话清理：删除录音会话
+                # 请求创建：创建查询请求对象
+                # 流式处理：调用现有的流式查询处理功能
                 logger.info(f"语音识别完成: {recognized_text}")
 
                 # 清理录音会话
@@ -1780,6 +2161,10 @@ async def single_button_voice_control(request: Request):
                 # 调用现有的process_query_stream功能，返回流式响应
                 return await process_query_stream(query_request)
 
+            # 处理逻辑：
+            # 错误捕获：捕获停止录音过程中的异常
+            # 会话清理：确保清理录音会话
+            # 错误响应：返回处理失败的错误信息
             except Exception as e:
                 logger.error(f"停止录音并处理失败: {e}")
                 # 清理录音会话
@@ -1793,6 +2178,10 @@ async def single_button_voice_control(request: Request):
                     "status": "error",
                 }
 
+    # 处理逻辑：
+    # 全局异常：捕获函数执行过程中的任何异常
+    # 错误日志：记录详细的错误信息
+    # 安全返回：安全地返回错误信息，避免变量未定义错误
     except Exception as e:
         logger.error(f"单按钮语音控制失败: {e}")
         return {
@@ -1806,6 +2195,10 @@ async def single_button_voice_control(request: Request):
 @app.post("/api/voice/record_and_process")
 async def record_and_process_voice(request: Request):
     """录制完成后一次性处理语音：录音 → 识别 → 输入到对话栏"""
+    # 功能说明：
+    # 这是一个POST API端点，用于处理录制完成的语音
+    # 与 single_button_voice_control 不同，这个函数专门处理已经录制完成的语音
+    # 只进行语音识别，不进行后续的对话处理
     global voice_recording_sessions, llm_client, tts_client, digital_human_client
 
     try:
@@ -1960,13 +2353,33 @@ async def record_and_process_voice(request: Request):
 # WebSocket处理函数
 async def websocket_handler(websocket):
     """WebSocket连接处理器"""
+    # 功能说明：
+    # 这是一个WebSocket连接处理器，用于处理实时音频流
+    # 支持前端录音数据的实时传输和语音识别
+    # 管理WebSocket连接的生命周期和会话状态
     # 检查路径是否匹配
+    # 处理逻辑：
+    # 路径检查：验证WebSocket连接的路径是否为 "/audio"
+    # 错误处理：如果不是支持的路径，记录警告并关闭连接
+    # 状态码：使用1008状态码表示策略违规
+    # 提前返回：不支持的路径直接返回，不进行后续处理
     path = websocket.request.path
     if path != "/audio":
         logger.warning(f"不支持的WebSocket路径: {path}")
         await websocket.close(1008, "不支持的路径")
         return
-        
+    
+    # 处理逻辑：
+    # 3.1 会话ID生成
+    # UUID生成：为每个WebSocket连接生成唯一的会话ID
+    # 全局唯一：确保会话ID在整个系统中唯一
+    # 3.2 连接存储
+    # 连接映射：将会话ID映射到WebSocket连接对象
+    # 全局管理：存储在全局字典中供其他函数访问
+    # 3.3 会话状态初始化
+    # 连接时间：记录连接建立的时间戳
+    # 统计信息：初始化音频帧数和字节数统计
+    # 活动时间：记录最后活动时间，用于超时检测
     session_id = str(uuid.uuid4())
     websocket_connections[session_id] = websocket
     audio_sessions[session_id] = {
@@ -1981,7 +2394,17 @@ async def websocket_handler(websocket):
     # 注意：实际的ASR客户端将在handle_audio_data中按需创建
     logger.info(f"WebSocket连接建立 - 会话ID: {session_id}, 路径: {path}")
     
-    
+    # 处理逻辑：
+    # 5.1 异步迭代
+    # 消息循环：使用 async for 循环处理WebSocket消息
+    # 实时处理：每个消息到达时立即处理
+    # 5.2 活动时间更新
+    # 时间戳更新：每次收到消息时更新最后活动时间
+    # 超时检测：用于检测连接是否超时
+    # 5.3 消息类型判断
+    # 字符串消息：JSON格式的控制消息
+    # 二进制消息：音频数据
+    # 类型分发：根据消息类型调用不同的处理函数
     try:
         async for message in websocket:
             try:
@@ -2016,6 +2439,29 @@ async def handle_json_message(session_id: str, data: dict):
     """处理JSON消息"""
     message_type = data.get("type", "unknown")
     
+    # 处理逻辑：
+    # 连接消息处理
+    # 前端连接消息
+    # 客户端信息：提取前端能力配置
+    # 音频参数：提取音频参数配置
+    # 日志记录：记录连接信息
+    # 连接确认：发送连接确认消息
+
+    # 具体步骤：
+    # 2.1 客户端信息提取
+    # 能力配置：提取前端的 capabilities 配置
+    # 音频参数：提取前端的 audio_params 配置
+    # 默认值处理：如果不存在则使用空字典
+    # 2.2 会话状态更新
+    # 信息存储：将客户端信息和音频参数存储到会话中
+    # 状态记录：更新会话状态以反映客户端连接
+    # 2.3 日志记录
+    # 连接日志：记录前端连接信息
+    # 详细信息：包含会话ID、客户端能力和音频参数
+    # 2.4 连接确认
+    # 确认消息：发送 hello_ack 类型的确认消息
+    # 时间戳：包含当前时间戳
+    # 状态标识：设置状态为 "ready"
     if message_type == "hello":
         # 前端连接消息
         client_info = data.get("capabilities", {})
@@ -2031,7 +2477,17 @@ async def handle_json_message(session_id: str, data: dict):
             "timestamp": asyncio.get_event_loop().time(),
             "status": "ready"
         })
-        
+    
+    # 具体步骤：
+    # 3.1 状态更新
+    # 录音状态：将会话的录音状态设置为 "recording"
+    # 开始时间：记录录音开始的时间戳
+    # 3.2 日志记录
+    # 开始日志：记录录音开始的信息
+    # 3.3 确认响应
+    # 确认消息：发送 recording_start_ack 确认消息
+    # 时间戳：包含录音开始的时间戳
+
     elif message_type == "recording_start":
         # 录音开始
         logger.info(f"录音开始 - 会话ID: {session_id}")
@@ -2052,6 +2508,17 @@ async def handle_json_message(session_id: str, data: dict):
         audio_sessions[session_id]["recording_end_time"] = asyncio.get_event_loop().time()
         
         # 发送最终音频包到STT服务，标记音频流结束
+        # 具体步骤：
+        # 4.3.1 客户端检查
+        # 存在性检查：检查STT客户端是否存在
+        # 客户端获取：获取对应的STT客户端实例
+        # 4.3.2 最终包发送
+        # 空数据发送：发送空的音频数据，标记为最后一个包
+        # 成功检查：检查发送是否成功
+        # 日志记录：记录发送结果
+        # 4.3.3 异常处理
+        # 错误捕获：捕获发送过程中的异常
+        # 错误日志：记录详细的错误信息
         if session_id in stt_clients:
             stt_client = stt_clients[session_id]
             try:
@@ -2066,6 +2533,16 @@ async def handle_json_message(session_id: str, data: dict):
                 logger.error(f"发送最终音频包时出错 - 会话ID: {session_id}: {e}")
         
         # 重置STT客户端会话状态
+        # 具体步骤：
+        # 4.4.1 会话重置
+        # 重置调用：调用STT客户端的重置会话方法
+        # 成功检查：检查重置是否成功
+        # 4.4.2 失败处理
+        # 客户端删除：如果重置失败，删除客户端实例
+        # 重新创建：为下次使用准备重新创建客户端
+        # 4.4.3 异常处理
+        # 错误捕获：捕获重置过程中的异常
+        # 清理操作：异常时也删除客户端实例
         if session_id in stt_clients:
             stt_client = stt_clients[session_id]
             try:
@@ -2124,19 +2601,44 @@ async def handle_json_message(session_id: str, data: dict):
         logger.debug(f"未知消息类型: {message_type}")
 
 async def handle_audio_data(session_id: str, audio_data: bytes):
-    """处理音频数据 - 前端录音 + 后端STT"""
+    # 功能说明：
+    # 这是一个异步函数，处理WebSocket连接中的二进制音频数据
+    # 实现前端录音数据的实时语音识别
+    # 支持流式音频处理和实时STT结果返回
     try:
         # 检查录音状态，只有在录音状态下才处理音频
+        # 处理逻辑：
+        # 2.1 状态获取
+        # 状态查询：从会话中获取录音状态，默认为 "stopped"
+        # 状态检查：验证当前是否处于录音状态
+        # 2.2 早期返回
+        # 条件判断：如果不是录音状态，直接返回
+        # 调试日志：记录跳过处理的原因
+        # 资源节约：避免不必要的处理开销
         recording_status = audio_sessions[session_id].get("recording_status", "stopped")
         if recording_status != "recording":
             logger.debug(f"录音未开始，跳过音频处理 - 会话ID: {session_id}")
             return
         
         # 更新统计
+        # 处理逻辑：
+        # 3.1 帧数统计
+        # 帧数递增：每次收到音频数据时增加帧数计数
+        # 字节统计：累加接收到的音频数据总字节数
+        # 3.2 性能监控
+        # 实时监控：用于监控音频处理性能
+        # 调试信息：提供详细的处理统计信息
         audio_sessions[session_id]["audio_frames_received"] += 1
         audio_sessions[session_id]["total_bytes_received"] += len(audio_data)
         
         # 获取或创建STT客户端
+        # 处理逻辑：
+        # 4.1 客户端检查
+        # 存在性检查：检查是否已存在STT客户端
+        # 按需创建：只在需要时创建新的客户端
+        # 4.2 模块导入
+        # 动态导入：在需要时导入STT相关模块
+        # 延迟加载：减少启动时的依赖加载
         if session_id not in stt_clients:
             logger.info(f"🔍 创建新的STT客户端 - 会话ID: {session_id}")
             # 创建新的STT客户端
@@ -2164,6 +2666,18 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
             )
             
             # 设置回调函数来处理STT结果 - 使用同步函数包装异步操作
+            # 处理逻辑：
+            # 7.1.1 结果处理
+            # 文本提取：获取识别的文本内容
+            # 最终状态：判断是否为最终结果
+            # 置信度计算：根据最终状态设置置信度
+            # 7.1.2 消息构建
+            # 消息类型：设置为 "stt_result"
+            # 数据结构：包含文本、最终状态和置信度
+            # 日志记录：记录详细的处理信息
+            # 7.1.3 异步发送
+            # 任务创建：使用 asyncio.create_task 创建异步任务
+            # 非阻塞：避免阻塞STT处理流程
             def on_stt_result(text: str, is_final: bool):
                 logger.info(f"🎯 STT结果回调被调用 - 会话ID: {session_id}, 文本: '{text}', 最终: {is_final}")
                 stt_message = {
@@ -2193,6 +2707,22 @@ async def handle_audio_data(session_id: str, audio_data: bytes):
             
             
             # 连接到STT服务
+            
+            # 处理逻辑：
+            # 8.1 连接建立
+            # WebSocket连接：连接到STT服务的WebSocket URL
+            # 连接检查：验证连接是否成功建立
+            # 8.2 识别会话启动
+            # 会话启动：启动语音识别会话
+            # 回调注册：注册结果和错误回调函数
+            # 成功检查：验证会话是否成功启动
+            # 8.3 客户端存储
+            # 全局存储：将客户端存储到全局字典中
+            # 成功日志：记录初始化成功信息
+            # 8.4 异常处理
+            # 错误捕获：捕获初始化过程中的异常
+            # 错误日志：记录详细的错误信息
+            # 早期返回：失败时直接返回
             try:
                 success = await stt_client.connect(STTConfig.STREAM_URL)
                 if not success:
@@ -2298,8 +2828,13 @@ async def send_json_message(session_id: str, message: dict):
     except Exception as e:
         logger.error(f"❌ 发送消息失败 - 会话ID: {session_id}: {e}")
 
+# 标点5 需要增加tts清除断开连接
 async def cleanup_websocket_session(session_id: str):
     """清理WebSocket会话"""
+    # 功能说明：
+    # 这是一个异步函数，用于清理WebSocket会话的所有相关资源
+    # 确保会话结束时正确释放内存和网络连接
+    # 防止资源泄漏和连接残留
     try:
         # 移除连接
         if session_id in websocket_connections:
